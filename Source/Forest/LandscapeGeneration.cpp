@@ -300,6 +300,11 @@ namespace LandscapeGeneration
 			using compute::dim;
 
 			auto size = Heightmap.width() * Heightmap.height();
+			auto waterHeight	= CreateHeightmap(Heightmap.width(), Heightmap.height());
+			auto sedimentImage	= CreateHeightmap(Heightmap.width(), Heightmap.height());
+			auto inFluxImage	= CreateHeightmap(Heightmap.width(), Heightmap.height());
+			auto outFluxImage	= CreateHeightmap(Heightmap.width(), Heightmap.height());
+			auto velocityImage	= CreateHeightmap(Heightmap.width(), Heightmap.height());
 
 			compute::program program =
 				compute::program::create_with_source_file({ GetKernelsPath() + "perlin.cl", GetKernelsPath() + "erosion.cl" }, *Context.get());
@@ -309,10 +314,18 @@ namespace LandscapeGeneration
 			compute::kernel kernel(program, "erosion");
 			kernel.set_arg(0, Heightmap);
 			kernel.set_arg(1, Heightmap);
-			kernel.set_arg(2, 100u);
-			kernel.set_arg(3, 1.f);
-			kernel.set_arg(4, Heightmap);
-			kernel.set_arg(5, Heightmap);
+			kernel.set_arg(2, waterHeight->Image);
+			kernel.set_arg(3, waterHeight->Image);
+			kernel.set_arg(4, sedimentImage->Image);
+			kernel.set_arg(5, sedimentImage->Image);
+			kernel.set_arg(6, inFluxImage->Image);
+			kernel.set_arg(7, outFluxImage->Image);
+			kernel.set_arg(8, velocityImage->Image);
+			kernel.set_arg(9, velocityImage->Image);
+			kernel.set_arg(10, 1000u);
+			kernel.set_arg(11, 10u);
+			kernel.set_arg(12, 0.1f);
+			kernel.set_arg(13, 1.f);
 
 			CommandQueue->enqueue_nd_range_kernel(kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
 		}

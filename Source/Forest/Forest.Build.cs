@@ -84,21 +84,21 @@ public class Forest : ModuleRules
                 string BoostRoot = Environment.GetEnvironmentVariable("BOOST_ROOT");
 
                 //if (Target.WindowsPlatform.GetVisualStudioCompilerVersionName() == "2017")
-                {
+                /*{
                     string BoostLibDir = Path.Combine(BoostRoot, "lib64-msvc-14.1/");
 
                     PublicIncludePaths.Add(BoostRoot);
                     PublicLibraryPaths.Add(BoostLibDir);
                     PublicAdditionalLibraries.Add(Path.Combine(BoostLibDir, "libboost_chrono-vc141-mt-1_65_1.lib"));
-                }
-                /*else if (Target.WindowsPlatform.GetVisualStudioCompilerVersionName() == "2015")
+                }*/
+                //else if (Target.WindowsPlatform.GetVisualStudioCompilerVersionName() == "2015")
                 {
                     string BoostLibDir = Path.Combine(BoostRoot, "lib64-msvc-14.0/");
 
                     PublicIncludePaths.Add(BoostRoot);
                     PublicLibraryPaths.Add(BoostLibDir);
                     PublicAdditionalLibraries.Add(Path.Combine(BoostLibDir, "libboost_chrono-vc140-mt-1_65_1.lib"));
-                }*/
+                }
             }
         }
     }
