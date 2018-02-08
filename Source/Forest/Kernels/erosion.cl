@@ -5,7 +5,7 @@ inline float rand(int2 co, int seed)
 }
 
 // Take an input Water Height map and add a random amount of rain to it
-inline void do_rainfall(
+__kernel void rainfall(
 	__read_only image2d_t 	inWaterHeight,
 	__write_only image2d_t 	outWaterHeight,
 	uint					seed,
@@ -28,7 +28,7 @@ inline void do_rainfall(
 }
 
 
-void do_flux(
+__kernel void flux(
 	__read_only image2d_t	inHeight,
 	__read_only image2d_t 	inWaterHeight,
 	__read_only image2d_t 	inFluxHeight,
@@ -50,10 +50,10 @@ void do_flux(
 
 	float4 lastflux = read_imagef(inFluxHeight, sampler, (int2)(x, y));
 
-	int4 height = convert_int4(read_imageui(inHeight, sampler, (int2)(x,y)).xxxx);
-	int4 waterHeight = convert_int4(read_imageui(inWaterHeight, sampler, (int2)(x,y)).xxxx);
+	uint4 height = convert_uint4(read_imageui(inHeight, sampler, (int2)(x,y)).xxxx);
+	uint4 waterHeight = convert_uint4(read_imageui(inWaterHeight, sampler, (int2)(x,y)).xxxx);
 
-	int4 heightAdj =
+	uint4 heightAdj =
 	{
 		read_imageui(inHeight, sampler, (int2)(x - 1,y)).x,
 		read_imageui(inHeight, sampler, (int2)(x + 1,y)).x,
@@ -61,7 +61,7 @@ void do_flux(
 		read_imageui(inHeight, sampler, (int2)(x,y - 1)).x
 	};
 
-	int4 waterHeightAdj =
+	uint4 waterHeightAdj =
 	{
 		read_imageui(inWaterHeight, sampler, (int2)(x - 1,y)).x,
 		read_imageui(inWaterHeight, sampler, (int2)(x + 1,y)).x,
@@ -69,7 +69,7 @@ void do_flux(
 		read_imageui(inWaterHeight, sampler, (int2)(x,y - 1)).x
 	};
 
-	int4 heightDif = (waterHeight + height) - (waterHeightAdj + heightAdj);
+	int4 heightDif = convert_int4(waterHeight + height) - convert_int4(waterHeightAdj + heightAdj);
 
 	float4 fluxHeight = max((float4)(0.f, 0.f, 0.f, 0.f),
 		lastflux + (deltaTime * area * ((grav * convert_float4(heightDif) / len))));
@@ -77,17 +77,46 @@ void do_flux(
 	write_imagef(outFluxHeight, (int2)(x, y), fluxHeight);
 }
 
+__kernel void calculate_k_factor(
+	__read_only image2d_t 	inWaterHeight,
+	__read_only image2d_t 	inFluxHeight,
+	__write_only image2d_t 	outFluxHeight,
+	float deltaTime)
+{
+	int x = get_global_id(0);
+	int y = get_global_id(1);
+	const sampler_t sampler = CLK_ADDRESS_NONE | CLK_FILTER_NEAREST;
+
+	const float len = 1.f;
+
+	uint waterHeight = read_imageui(inWaterHeight, sampler, (int2)(x, y)).x;
+	float4 flux = read_imagef(inFluxHeight, sampler, (int2)(x, y));
+
+	// This is the scaling factor for the flux. If the flux's magnitude is too large it will scale it down
+	float K = max(1.f, (convert_float(waterHeight) * len) / ((flux.x + flux.y + flux.z + flux.w) * deltaTime));
+
+	flux *= K;
+
+	write_imagef(outFluxHeight, (int2)(x, y), flux);
+}
+
+__kernel void calculate_water_height_change(
+	__read_only image2d_t 	inWaterHeight,
+	__read_only image2d_t 	inFluxHeight,
+	__write_only image2d_t 	outFluxHeight,
+	float deltaTime)
+
 __kernel void erosion(
 	__read_only image2d_t 	heightIn,		// 0
 	__write_only image2d_t 	heightOut,		// 1
 	__read_only image2d_t 	inWaterHeight,	// 2
 	__write_only image2d_t 	outWaterHeight,	// 3
-	__read_only image2d_t 	inSediment,		// 4
-	__write_only image2d_t 	outSediment,	// 5
+	//__read_only image2d_t 	inSediment,		// 4
+	//__write_only image2d_t 	outSediment,	// 5
 	__read_only image2d_t 	inFlux,			// 6
 	__write_only image2d_t 	outFlux,		// 7
-	__read_only image2d_t 	inVelocity,		// 8
-	__write_only image2d_t 	outVelocity,	// 9
+	//__read_only image2d_t 	inVelocity,		// 8
+	//__write_only image2d_t 	outVelocity,	// 9
 	uint					seed,			// 10
 	uint 					iterations,		// 11
 	float 					deltaTime,		// 12
@@ -105,8 +134,8 @@ __kernel void erosion(
 
 	uint4 value = read_imageui(heightIn, sampler, (int2)(x, y));
 
-	do_rainfall(inWaterHeight, outWaterHeight, seed, deltaTime, waterMul);
-	do_flux(heightIn, inWaterHeight, inFlux, outFlux, deltaTime);
+	//do_rainfall(inWaterHeight, outWaterHeight, seed, deltaTime, waterMul);
+	//do_flux(heightIn, inWaterHeight, inFlux, outFlux, deltaTime);
 
 	//value.x = (uint) ((sin((float)x / period) * cos((float)y / period) + 1.f) * 4096.f);
 

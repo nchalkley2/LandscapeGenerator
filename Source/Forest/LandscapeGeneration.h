@@ -36,10 +36,17 @@ enum class EMixType : uint8
 
 namespace LandscapeGeneration
 {
+	extern boost::compute::image_format ImageFormat;
+
 	class Heightmap
 	{
 	public:
-		Heightmap(int SizeX, int SizeY);
+		Heightmap(
+			int SizeX, 
+			int SizeY, 
+			boost::compute::image_format inImageFormat
+				= ImageFormat
+		);
 
 		// Copy the heightmap from the device to the client in a TArray<uint16>
 		operator TArray<uint16>() const;
@@ -51,7 +58,12 @@ namespace LandscapeGeneration
 	void SetDevices(std::vector<boost::compute::device> Devices);
 
 	// Creates a heightmap on the device and returns a wrapper pointer to it
-	std::shared_ptr<Heightmap> CreateHeightmap(int SizeX, int SizeY);
+	std::shared_ptr<Heightmap> CreateHeightmap(
+		int SizeX, 
+		int SizeY, 
+		boost::compute::image_format inImageFormat 
+			= ImageFormat
+	);
 
 	void PushKernel(std::function<void()> KernelFunc);
 

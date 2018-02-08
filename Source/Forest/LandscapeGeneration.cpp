@@ -68,7 +68,9 @@ namespace LandscapeGeneration
 	static unique_ptr<compute::command_queue>	CommandQueue;
 
 	// The image format for all heightmaps
-	static compute::image_format				ImageFormat = compute::image_format(CL_R, CL_UNSIGNED_INT16);
+	// This has external linkage to some default params for functions in this 
+	// namespace
+	compute::image_format						ImageFormat = compute::image_format(CL_R, CL_UNSIGNED_INT16);
 
 	static std::queue<std::function<void()>>	KernelQueue;
 	static std::thread							KernelThread;
@@ -100,10 +102,10 @@ namespace LandscapeGeneration
 	}
 
 	// Heightmap Ctor. Just allocates the image on the device side 
-	Heightmap::Heightmap(int SizeX, int SizeY)
+	Heightmap::Heightmap(int SizeX, int SizeY, boost::compute::image_format inImageFormat)
 	{
 		EnsureStateIsSetup();
-		Image = compute::image2d(*Context.get(), SizeX, SizeY, ImageFormat);
+		Image = compute::image2d(*Context.get(), SizeX, SizeY, inImageFormat);
 	}
 
 	Heightmap::operator TArray<uint16, FDefaultAllocator>() const
@@ -126,9 +128,9 @@ namespace LandscapeGeneration
 			new compute::command_queue(*LandscapeGeneration::Context.get(), LandscapeGeneration::Devices[0]));
 	}
 
-	shared_ptr<Heightmap> CreateHeightmap(int SizeX, int SizeY)
+	shared_ptr<Heightmap> CreateHeightmap(int SizeX, int SizeY, boost::compute::image_format inImageFormat)
 	{
-		return std::shared_ptr<Heightmap>(new Heightmap(SizeX, SizeY));
+		return std::shared_ptr<Heightmap>(new Heightmap(SizeX, SizeY, inImageFormat));
 	}
 
 	void Tick()
@@ -299,11 +301,13 @@ namespace LandscapeGeneration
 		{
 			using compute::dim;
 
+			const auto FluxImageFormat = compute::image_format(CL_RGBA, CL_FLOAT);
+
 			auto size = Heightmap.width() * Heightmap.height();
 			auto waterHeight	= CreateHeightmap(Heightmap.width(), Heightmap.height());
 			auto sedimentImage	= CreateHeightmap(Heightmap.width(), Heightmap.height());
-			auto inFluxImage	= CreateHeightmap(Heightmap.width(), Heightmap.height());
-			auto outFluxImage	= CreateHeightmap(Heightmap.width(), Heightmap.height());
+			auto inFluxImage	= CreateHeightmap(Heightmap.width(), Heightmap.height(), FluxImageFormat);
+			auto outFluxImage	= CreateHeightmap(Heightmap.width(), Heightmap.height(), FluxImageFormat);
 			auto velocityImage	= CreateHeightmap(Heightmap.width(), Heightmap.height());
 
 			compute::program program =
@@ -311,7 +315,42 @@ namespace LandscapeGeneration
 
 			((ue_compute_program*)(&program))->build("-I \"" + GetKernelsPath() + "\"");
 			
-			compute::kernel kernel(program, "erosion");
+			// Adds a random amount of rainfall
+			compute::kernel rainfall_kernel(program, "rainfall");
+			rainfall_kernel.set_args(
+				waterHeight->Image,		// Water Height in
+				waterHeight->Image,		// Water Height out
+				(cl_uint) 1000u,		// Seed
+				(cl_float) 0.1f,		// DeltaTime
+				(cl_float) 1.f			// WaterMul
+			);
+
+			CommandQueue->enqueue_nd_range_kernel(rainfall_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
+
+			// Calculates the flux
+			compute::kernel flux_kernel(program, "flux");
+			flux_kernel.set_args(
+				Heightmap,				// Terrain Height in
+				waterHeight->Image,		// Water Height in
+				inFluxImage->Image,		// Flux in
+				outFluxImage->Image,	// Flux out
+				(cl_float) 0.1f			// DeltaTime
+			);
+
+			CommandQueue->enqueue_nd_range_kernel(flux_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
+
+			// Calculates the scaling factor for the flux and scales the flux
+			compute::kernel k_factor_kernel(program, "calculate_k_factor");
+			k_factor_kernel.set_args(
+				waterHeight->Image,		// Water Height in
+				inFluxImage->Image,		// Flux in
+				outFluxImage->Image,	// Flux out
+				(cl_float) 0.1f			// DeltaTime
+			);
+
+			CommandQueue->enqueue_nd_range_kernel(k_factor_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
+
+			/*compute::kernel kernel(program, "erosion");
 			kernel.set_arg(0, Heightmap);
 			kernel.set_arg(1, Heightmap);
 			kernel.set_arg(2, waterHeight->Image);
@@ -325,9 +364,7 @@ namespace LandscapeGeneration
 			kernel.set_arg(10, 1000u);
 			kernel.set_arg(11, 10u);
 			kernel.set_arg(12, 0.1f);
-			kernel.set_arg(13, 1.f);
-
-			CommandQueue->enqueue_nd_range_kernel(kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
+			kernel.set_arg(13, 1.f);*/
 		}
 	}
 }
