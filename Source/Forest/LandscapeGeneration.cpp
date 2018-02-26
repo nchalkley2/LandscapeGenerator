@@ -327,44 +327,55 @@ namespace LandscapeGeneration
 
 			CommandQueue->enqueue_nd_range_kernel(rainfall_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
 
-			// Calculates the flux
-			compute::kernel flux_kernel(program, "flux");
-			flux_kernel.set_args(
-				Heightmap,				// Terrain Height in
+
+			// Calculate flux and ping-pong flux images
+			{
+				// Calculates the flux
+				compute::kernel flux_kernel(program, "flux");
+				flux_kernel.set_args(
+					Heightmap,				// Terrain Height in
+					waterHeight->Image,		// Water Height in
+					inFluxImage->Image,		// Flux in
+					outFluxImage->Image,	// Flux out
+					(cl_float) 0.1f			// DeltaTime
+				);
+
+				CommandQueue->enqueue_nd_range_kernel(flux_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
+
+				// Calculates the scaling factor for the flux and scales the flux
+				compute::kernel k_factor_kernel(program, "calculate_k_factor");
+				k_factor_kernel.set_args(
+					waterHeight->Image,		// Water Height in
+					outFluxImage->Image,	// Flux in
+					outFluxImage->Image,	// Flux out
+					(cl_float) 0.1f			// DeltaTime
+				);
+
+				CommandQueue->enqueue_nd_range_kernel(k_factor_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
+
+				// Make sure to ping-pong after k factor
+				std::swap(inFluxImage, outFluxImage);
+			}
+
+
+			compute::kernel calculate_water_height_kernel(program, "calculate_water_height_change");
+			calculate_water_height_kernel.set_args(
 				waterHeight->Image,		// Water Height in
+				waterHeight->Image,		// Water Height out
 				inFluxImage->Image,		// Flux in
-				outFluxImage->Image,	// Flux out
 				(cl_float) 0.1f			// DeltaTime
 			);
 
-			CommandQueue->enqueue_nd_range_kernel(flux_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
+			CommandQueue->enqueue_nd_range_kernel(calculate_water_height_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
 
-			// Calculates the scaling factor for the flux and scales the flux
-			compute::kernel k_factor_kernel(program, "calculate_k_factor");
-			k_factor_kernel.set_args(
-				waterHeight->Image,		// Water Height in
+			compute::kernel calculate_velocity_kernel(program, "calculate_velocity");
+			calculate_velocity_kernel.set_args(
 				inFluxImage->Image,		// Flux in
-				outFluxImage->Image,	// Flux out
+				velocityImage->Image,	// Velocity out
 				(cl_float) 0.1f			// DeltaTime
 			);
 
-			CommandQueue->enqueue_nd_range_kernel(k_factor_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
-
-			/*compute::kernel kernel(program, "erosion");
-			kernel.set_arg(0, Heightmap);
-			kernel.set_arg(1, Heightmap);
-			kernel.set_arg(2, waterHeight->Image);
-			kernel.set_arg(3, waterHeight->Image);
-			kernel.set_arg(4, sedimentImage->Image);
-			kernel.set_arg(5, sedimentImage->Image);
-			kernel.set_arg(6, inFluxImage->Image);
-			kernel.set_arg(7, outFluxImage->Image);
-			kernel.set_arg(8, velocityImage->Image);
-			kernel.set_arg(9, velocityImage->Image);
-			kernel.set_arg(10, 1000u);
-			kernel.set_arg(11, 10u);
-			kernel.set_arg(12, 0.1f);
-			kernel.set_arg(13, 1.f);*/
+			CommandQueue->enqueue_nd_range_kernel(calculate_velocity_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
 		}
 	}
 }

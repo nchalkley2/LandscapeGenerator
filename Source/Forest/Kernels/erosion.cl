@@ -6,7 +6,7 @@ inline float rand(int2 co, int seed)
 
 // Take an input Water Height map and add a random amount of rain to it
 __kernel void rainfall(
-	__read_only image2d_t 	inWaterHeight,
+	__read_only image2d_t 	inWaterHeight, // These can be the same value
 	__write_only image2d_t 	outWaterHeight,
 	uint					seed,
 	float 					deltaTime,
@@ -31,7 +31,7 @@ __kernel void rainfall(
 __kernel void flux(
 	__read_only image2d_t	inHeight,
 	__read_only image2d_t 	inWaterHeight,
-	__read_only image2d_t 	inFluxHeight,
+	__read_only image2d_t 	inFluxHeight, // These have to be different
 	__write_only image2d_t 	outFluxHeight,
 	float deltaTime)
 {
@@ -102,9 +102,108 @@ __kernel void calculate_k_factor(
 
 __kernel void calculate_water_height_change(
 	__read_only image2d_t 	inWaterHeight,
+	__write_only image2d_t 	outWaterHeight,
 	__read_only image2d_t 	inFluxHeight,
-	__write_only image2d_t 	outFluxHeight,
 	float deltaTime)
+{
+	int x = get_global_id(0);
+	int y = get_global_id(1);
+	const sampler_t sampler = CLK_ADDRESS_NONE | CLK_FILTER_NEAREST;
+
+	const float len = 1.f;
+
+	// fluxImg.x = fL
+	// fluxImg.y = fR
+	// fluxImg.z = fT
+	// fluxImg.w = fB
+
+	// Read the adjacent flux cells and add them
+	float fluxIn =
+		  read_imagef(inFluxHeight, sampler, (int2)(x - 1, y)).y	// Right
+		+ read_imagef(inFluxHeight, sampler, (int2)(x + 1, y)).x	// Left
+		+ read_imagef(inFluxHeight, sampler, (int2)(x, y + 1)).w	// Top
+		+ read_imagef(inFluxHeight, sampler, (int2)(x, y - 1)).z;	// Bottom
+
+	// Add all the values in the current flux cell
+	float4 flux = read_imagef(inFluxHeight, sampler, (int2)(x, y));
+	float fluxOut = flux.x + flux.y + flux.z + flux.w;
+
+	float waterDif = (fluxIn - fluxOut) * deltaTime;
+	
+	// Read the water input, add the water difference, and write out
+	int waterHeight = read_imageui(inWaterHeight, sampler, (int2)(x, y)).x;
+	write_imageui(outWaterHeight, (int2)(x, y), (uint)(waterHeight + convert_int(waterDif / len)));
+}
+
+__kernel void calculate_velocity(
+	__read_only image2d_t 	inFluxHeight,
+	__write_only image2d_t	outVelocity,
+	float deltaTime)
+{
+	int x = get_global_id(0);
+	int y = get_global_id(1);
+	const sampler_t sampler = CLK_ADDRESS_NONE | CLK_FILTER_NEAREST;
+
+	const float len = 1.f;
+
+	// fluxImg.x = fL
+	// fluxImg.y = fR
+	// fluxImg.z = fT
+	// fluxImg.w = fB
+
+	// velocityImg.x = fL
+	// velocityImg.y = fR
+	// velocityImg.z = fT
+	// velocityImg.w = fB
+
+	float4 flux = read_imagef(inFluxHeight, sampler, (int2)(x, y));
+
+	float4 fluxAdj =
+	{
+		read_imagef(inFluxHeight, sampler, (int2)(x - 1,y)).y,
+		read_imagef(inFluxHeight, sampler, (int2)(x + 1,y)).x,
+		read_imagef(inFluxHeight, sampler, (int2)(x,y + 1)).w,
+		read_imagef(inFluxHeight, sampler, (int2)(x,y - 1)).z
+	};
+
+	float4 velocity =
+	{
+		(fluxAdj.x - flux.x + fluxAdj.y - flux.y) / 2.f, // velocity x
+		(fluxAdj.z - flux.z + fluxAdj.w - flux.w) / 2.f, // velocity y
+		0.0,
+		0.0
+	};
+
+	write_imagef(outVelocity, (int2)(x, y), velocity);
+}
+
+inline float calculateTilt(
+	__read_only image2d_t inHeight)
+{
+	int x = get_global_id(0);
+	int y = get_global_id(1);
+	const sampler_t sampler = CLK_ADDRESS_NONE | CLK_FILTER_NEAREST;
+
+	float4 heightAdj =
+	{
+		(float)read_imageui(inHeight, sampler, (int2)(x - 1,y)).x,
+		(float)read_imageui(inHeight, sampler, (int2)(x + 1,y)).x,
+		(float)read_imageui(inHeight, sampler, (int2)(x,y + 1)).x,
+		(float)read_imageui(inHeight, sampler, (int2)(x,y - 1)).x
+	};
+
+	float height = (float)read_imageui(inHeight, sampler, (int2)(x, y)).x;
+
+	float2 nrmVec = 
+	{
+		(heightAdj.x - height) + (height - heightAdj.y),
+		(heightAdj.z - height) + (height - heightAdj.w)
+	};
+
+	nrmVec = normalize(nrmVec);
+
+	return 0.0;
+}
 
 __kernel void erosion(
 	__read_only image2d_t 	heightIn,		// 0
@@ -133,11 +232,4 @@ __kernel void erosion(
 	const float period = 32.f;
 
 	uint4 value = read_imageui(heightIn, sampler, (int2)(x, y));
-
-	//do_rainfall(inWaterHeight, outWaterHeight, seed, deltaTime, waterMul);
-	//do_flux(heightIn, inWaterHeight, inFlux, outFlux, deltaTime);
-
-	//value.x = (uint) ((sin((float)x / period) * cos((float)y / period) + 1.f) * 4096.f);
-
-	//write_imageui(heightOut, (int2)(x, y), value);
 }
