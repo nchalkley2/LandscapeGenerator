@@ -138,8 +138,7 @@ __kernel void calculate_water_height_change(
 __kernel void calculate_velocity(
 	__read_only image2d_t 	inFluxHeight,
 	__write_only image2d_t	outVelocity,
-	float deltaTime,
-	__global char* buffer)
+	float deltaTime)
 {
 	int x = get_global_id(0);
 	int y = get_global_id(1);
@@ -205,16 +204,16 @@ inline float2 calculateNrm(
 	return normalize(nrmVec);
 }
 
-inline float calculateSinOfTiltAngle(
+inline float calculateSinTiltAngle(
 	__read_only image2d_t inHeight)
 {
 	float2 nrmVec = calculateNrm(inHeight);
 
-	// This is the cos of the tilt angle, squared 
-	float nrmVecSqrdCos = 1.0 / (1.0 + nrmVec.x * nrmVec.x + nrmVec.y * nrmVec.y);
+	// This is the cos^2 of the tilt angle 
+	float vecCos = 1.0 / (1.0 + nrmVec.x * nrmVec.x + nrmVec.y * nrmVec.y);
 
-	// sin = sqrt(1-cos^2)
-	return sqrt(1 - nrmVecSqrdCos);
+	// sin = sqrt(1 - cos^2)
+	return sqrt(1.0 - vecCos);
 }
 
 inline float lmax(const float waterHeight, const float maxErosionDepth)
@@ -227,15 +226,19 @@ inline float lmax(const float waterHeight, const float maxErosionDepth)
 		return 1.0 - ((maxErosionDepth - waterHeight) / maxErosionDepth);
 }
 
-__kernel void calculate_sediment_capacity(
-	__read_only image2d_t 	heightIn,
-	__write_only image2d_t 	heightOut
-)
+float calculate_sediment_capacity(
+	const float sedimentCapacity,
+	__read_only image2d_t	inHeight,
+	__read_only image2d_t 	inVelocity)
 {
 	int x = get_global_id(0);
 	int y = get_global_id(1);
 
 	const sampler_t sampler = CLK_ADDRESS_NONE | CLK_FILTER_NEAREST;
+
+	float velocityMagnitude = length(read_imagef(inVelocity, sampler, (int2)(x, y)).xy);
+
+	return sedimentCapacity * calculateSinTiltAngle(inHeight) * velocityMagnitude;
 }
 
 /*

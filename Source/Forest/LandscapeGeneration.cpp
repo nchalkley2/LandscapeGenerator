@@ -386,6 +386,15 @@ namespace LandscapeGeneration
 
 			CommandQueue->enqueue_nd_range_kernel(calculate_velocity_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
 
+			/*compute::kernel calculate_sediment_capacity_kernel(program, "calculate_sediment_capacity");
+			calculate_sediment_capacity_kernel.set_args(
+				inFluxImage->Image,		// Flux in
+				velocityImage->Image,	// Velocity out
+				(cl_float) 0.1f			// DeltaTime
+			);
+
+			CommandQueue->enqueue_nd_range_kernel(calculate_sediment_capacity_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));*/
+
 			//compute::copy(
 			//	hostBuffer.begin(), hostBuffer.end(), buffer.begin(), *CommandQueue.get()
 			//);
