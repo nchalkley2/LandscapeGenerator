@@ -58,7 +58,9 @@ public class Forest : ModuleRules
     }
 
     public void AddComputePath(ReadOnlyTargetRules Target)
-    {		
+    {
+        bUseRTTI = true;
+
         // Windows paths
         if (Target.Platform == UnrealTargetPlatform.Win32 || Target.Platform == UnrealTargetPlatform.Win64)
         {
@@ -83,7 +85,7 @@ public class Forest : ModuleRules
             {
                 string BoostRoot = Environment.GetEnvironmentVariable("BOOST_ROOT");
 
-                if (WindowsPlatform.Compiler == WindowsCompiler.VisualStudio2017)
+                if (Target.WindowsPlatform.Compiler == WindowsCompiler.VisualStudio2017)
                 {
                     string BoostLibDir = Path.Combine(BoostRoot, "lib64-msvc-14.1/");
 
@@ -91,7 +93,7 @@ public class Forest : ModuleRules
                     PublicLibraryPaths.Add(BoostLibDir);
                     PublicAdditionalLibraries.Add(Path.Combine(BoostLibDir, "libboost_chrono-vc141-mt-1_65_1.lib"));
                 }
-                else if (WindowsPlatform.Compiler == WindowsCompiler.VisualStudio2015)
+                else if (Target.WindowsPlatform.Compiler == WindowsCompiler.VisualStudio2015)
                 {
                     string BoostLibDir = Path.Combine(BoostRoot, "lib64-msvc-14.0/");
 

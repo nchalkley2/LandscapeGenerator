@@ -138,7 +138,8 @@ __kernel void calculate_water_height_change(
 __kernel void calculate_velocity(
 	__read_only image2d_t 	inFluxHeight,
 	__write_only image2d_t	outVelocity,
-	float deltaTime)
+	float deltaTime,
+	__global char* buffer)
 {
 	int x = get_global_id(0);
 	int y = get_global_id(1);
@@ -168,8 +169,8 @@ __kernel void calculate_velocity(
 
 	float4 velocity =
 	{
-		(fluxAdj.x - flux.x + fluxAdj.y - flux.y) / 2.f, // velocity x
-		(fluxAdj.z - flux.z + fluxAdj.w - flux.w) / 2.f, // velocity y
+		(fluxAdj.x - flux.x + flux.y - fluxAdj.y) / 2.f, // velocity x
+		(fluxAdj.z - flux.z + flux.w - fluxAdj.w) / 2.f, // velocity y
 		0.0,
 		0.0
 	};
@@ -177,7 +178,7 @@ __kernel void calculate_velocity(
 	write_imagef(outVelocity, (int2)(x, y), velocity);
 }
 
-inline float calculateTilt(
+inline float2 calculateNrm(
 	__read_only image2d_t inHeight)
 {
 	int x = get_global_id(0);
@@ -194,17 +195,50 @@ inline float calculateTilt(
 
 	float height = (float)read_imageui(inHeight, sampler, (int2)(x, y)).x;
 
-	float2 nrmVec = 
+	// X+ Y+
+	float2 nrmVec =
 	{
 		(heightAdj.x - height) + (height - heightAdj.y),
 		(heightAdj.z - height) + (height - heightAdj.w)
 	};
 
-	nrmVec = normalize(nrmVec);
-
-	return 0.0;
+	return normalize(nrmVec);
 }
 
+inline float calculateSinOfTiltAngle(
+	__read_only image2d_t inHeight)
+{
+	float2 nrmVec = calculateNrm(inHeight);
+
+	// This is the cos of the tilt angle, squared 
+	float nrmVecSqrdCos = 1.0 / (1.0 + nrmVec.x * nrmVec.x + nrmVec.y * nrmVec.y);
+
+	// sin = sqrt(1-cos^2)
+	return sqrt(1 - nrmVecSqrdCos);
+}
+
+inline float lmax(const float waterHeight, const float maxErosionDepth)
+{
+	if (waterHeight <= 0)
+		return 0.0;
+	else if (waterHeight >= maxErosionDepth)
+		return 1.0;
+	else // if (x > 0 && x < maxErosionDepth)
+		return 1.0 - ((maxErosionDepth - waterHeight) / maxErosionDepth);
+}
+
+__kernel void calculate_sediment_capacity(
+	__read_only image2d_t 	heightIn,
+	__write_only image2d_t 	heightOut
+)
+{
+	int x = get_global_id(0);
+	int y = get_global_id(1);
+
+	const sampler_t sampler = CLK_ADDRESS_NONE | CLK_FILTER_NEAREST;
+}
+
+/*
 __kernel void erosion(
 	__read_only image2d_t 	heightIn,		// 0
 	__write_only image2d_t 	heightOut,		// 1
@@ -233,3 +267,4 @@ __kernel void erosion(
 
 	uint4 value = read_imageui(heightIn, sampler, (int2)(x, y));
 }
+*/

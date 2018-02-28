@@ -12,6 +12,7 @@
 #include <boost/compute/image/image2d.hpp>
 #include <boost/compute/utility/dim.hpp>
 #include <boost/compute/utility/source.hpp>
+#include <boost/compute/container/vector.hpp>
 #pragma warning(pop)
 
 #include <memory>
@@ -60,6 +61,11 @@ public:
 		//}
 	}
 };
+
+#include <io.h>  
+#include <stdlib.h>  
+#include <cstdio>
+#include <cstring>
 
 namespace LandscapeGeneration
 {
@@ -368,6 +374,9 @@ namespace LandscapeGeneration
 
 			CommandQueue->enqueue_nd_range_kernel(calculate_water_height_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
 
+			//vector<char> hostBuffer(4096);
+			//compute::vector<char> buffer(4096, '\0', *CommandQueue.get());
+
 			compute::kernel calculate_velocity_kernel(program, "calculate_velocity");
 			calculate_velocity_kernel.set_args(
 				inFluxImage->Image,		// Flux in
@@ -376,6 +385,14 @@ namespace LandscapeGeneration
 			);
 
 			CommandQueue->enqueue_nd_range_kernel(calculate_velocity_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
+
+			//compute::copy(
+			//	hostBuffer.begin(), hostBuffer.end(), buffer.begin(), *CommandQueue.get()
+			//);
+
+			//FString Fs = FString(ANSI_TO_TCHAR(hostBuffer.data()));
+			//UE_LOG(LogTemp, Warning, TEXT("%s"), *Fs);
+			//UE_LOG(LogTemp, Warning, TEXT("asfkahfkld"));
 		}
 	}
 }
