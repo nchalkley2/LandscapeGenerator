@@ -114,10 +114,36 @@ namespace LandscapeGeneration
 		Image = compute::image2d(*Context.get(), SizeX, SizeY, inImageFormat);
 	}
 
-	Heightmap::operator TArray<uint16, FDefaultAllocator>() const
+	Heightmap::operator TArray<uint16>() const
 	{
+		if (this->Image.format() != boost::compute::image_format(CL_R, CL_UNSIGNED_INT16))
+			throw std::runtime_error("Wrong heightmap type conversion");
+
 		TArray<uint16> OutArray;
 		OutArray.SetNumUninitialized(Image.width() * Image.height());
+
+		// Copy from the device to the host
+		CommandQueue->enqueue_read_image(Image, Image.origin(), Image.size(), OutArray.GetData());
+
+		return OutArray;
+	}
+
+	void* Heightmap::CreateRawCopy() const
+	{
+		uint8* OutData = new uint8[Image.get_memory_size()];
+
+		CommandQueue->enqueue_read_image(Image, Image.origin(), Image.size(), OutData);
+
+		return OutData;
+	}
+
+	Heightmap::operator TArray<float>() const
+	{
+		if (this->Image.format() != boost::compute::image_format(CL_RGBA, CL_FLOAT))
+			throw std::runtime_error("Wrong heightmap type conversion");
+
+		TArray<float> OutArray;
+		OutArray.SetNumUninitialized(Image.width() * Image.height() * 4);
 
 		// Copy from the device to the host
 		CommandQueue->enqueue_read_image(Image, Image.origin(), Image.size(), OutArray.GetData());
@@ -359,11 +385,13 @@ namespace LandscapeGeneration
 
 				CommandQueue->enqueue_nd_range_kernel(k_factor_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
 
+				Heightmap = outFluxImage.get()->Image;
+
 				// Make sure to ping-pong after k factor
-				std::swap(inFluxImage, outFluxImage);
+				//std::swap(inFluxImage, outFluxImage);
 			}
 
-
+			/*
 			compute::kernel calculate_water_height_kernel(program, "calculate_water_height_change");
 			calculate_water_height_kernel.set_args(
 				waterHeight->Image,		// Water Height in
@@ -393,7 +421,7 @@ namespace LandscapeGeneration
 				(cl_float) 0.1f			// DeltaTime
 			);
 
-			CommandQueue->enqueue_nd_range_kernel(calculate_sediment_capacity_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));*/
+			CommandQueue->enqueue_nd_range_kernel(calculate_sediment_capacity_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
 
 			//compute::copy(
 			//	hostBuffer.begin(), hostBuffer.end(), buffer.begin(), *CommandQueue.get()
@@ -402,6 +430,7 @@ namespace LandscapeGeneration
 			//FString Fs = FString(ANSI_TO_TCHAR(hostBuffer.data()));
 			//UE_LOG(LogTemp, Warning, TEXT("%s"), *Fs);
 			//UE_LOG(LogTemp, Warning, TEXT("asfkahfkld"));
+			*/
 		}
 	}
 }

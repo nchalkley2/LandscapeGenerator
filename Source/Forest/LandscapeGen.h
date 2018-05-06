@@ -33,14 +33,20 @@ class FOREST_API ALandscapeGen : public AActor
 {
 	GENERATED_UCLASS_BODY()
 
-	friend struct FHeightMapInfoWrapper;
+	//friend struct FHeightMapInfoWrapper;
 
 public:
 	UPROPERTY(EditAnywhere, Category="Landscape Actor")
 		TWeakObjectPtr<ALandscape> Landscape;
 
-	//UFUNCTION(Category = "Landscape")
-	//	void Generate_Landscape();
+	UFUNCTION(BlueprintCallable, Category = "Textures")
+		UTexture2D* CreateTransientHeightmap();
+
+	UFUNCTION(BlueprintCallable, Category = "Textures")
+		UTexture2D* CreateTransientTexture();
+
+	UFUNCTION(BlueprintCallable, Category = "Functions")
+		void SetTransientHeightmap(UTexture2D* Texture, FHeightmapWrapper HeightMap);
 	
 	UFUNCTION(BlueprintPure, Category = "Noise")
 		FHeightmapWrapper Perlin_Noise(float Size, int32 Seed, int32 Depth, float Amplitude);

@@ -50,6 +50,9 @@ namespace LandscapeGeneration
 
 		// Copy the heightmap from the device to the client in a TArray<uint16>
 		operator TArray<uint16>() const;
+		operator TArray<float>() const;
+
+		void* CreateRawCopy() const;
 
 		boost::compute::image2d Image;
 	};

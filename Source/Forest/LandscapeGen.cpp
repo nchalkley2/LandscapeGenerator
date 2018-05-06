@@ -124,6 +124,79 @@ TArray<uint16> ALandscapeGen::GetLandscapeHeightmapSorted()
 	return Data;
 }
 
+UTexture2D* ALandscapeGen::CreateTransientTexture()
+{
+	if (Landscape.IsValid())
+	{
+		auto LandscapeRef = Landscape.Get();
+		auto LandscapeBounds = LandscapeRef->GetBoundingRect();
+
+		auto* Texture = UTexture2D::CreateTransient(LandscapeBounds.Max.X + 1, LandscapeBounds.Max.Y + 1, EPixelFormat::PF_FloatRGBA);
+
+		return Texture->UpdateResource(), Texture;
+	}
+
+	return nullptr;
+}
+
+UTexture2D* ALandscapeGen::CreateTransientHeightmap()
+{
+	if (Landscape.IsValid())
+	{
+		auto LandscapeRef = Landscape.Get();
+		auto LandscapeBounds = LandscapeRef->GetBoundingRect();
+
+		auto* Texture = UTexture2D::CreateTransient(LandscapeBounds.Max.X + 1, LandscapeBounds.Max.Y + 1, EPixelFormat::PF_R16_UINT);
+
+		return Texture->UpdateResource(), Texture;
+	}
+
+	return nullptr;
+}
+
+void ALandscapeGen::SetTransientHeightmap(UTexture2D* Texture, FHeightmapWrapper HeightMap)
+{
+	if (Landscape.IsValid())
+	{
+		auto LandscapeRef = Landscape.Get();
+		auto LandscapeBounds = LandscapeRef->GetBoundingRect();
+
+		UE_LOG(LogTemp, Warning, TEXT("Set Transient Heightmap"));
+
+		// Check that the heightmap exists
+		if (HeightMap.Heightmap != nullptr)
+		{
+			// This has to be added to the queue so that its executed in order
+			LandscapeGeneration::PushKernel([=, this]() -> void
+			{
+				if (HeightMap.Heightmap->Image.format() == boost::compute::image_format(CL_R, CL_UNSIGNED_INT16))
+				{
+					// Convert the array from unsigned int16 to float
+					TArray<uint16> HeightmapArr = *HeightMap.Heightmap.get();
+					FFloat16* Data = new FFloat16[HeightmapArr.Num()];
+
+					for (int32 i = 0; i < HeightmapArr.Num(); i++)
+					{
+						Data[i] = HeightmapArr[i];
+					}
+
+					// What does this even do?
+					FUpdateTextureRegion2D* UpdateRegion = new FUpdateTextureRegion2D(0, 0, 0, 0, LandscapeBounds.Max.X + 1, LandscapeBounds.Max.Y + 1);
+
+					Texture->UpdateTextureRegions(0, 1, UpdateRegion, (LandscapeBounds.Max.X + 1) * 2, 2, (uint8*)Data, [](uint8* Data, const FUpdateTextureRegion2D* UpdateRegion) { delete Data; delete UpdateRegion; });
+				}
+				else if (HeightMap.Heightmap->Image.format() == boost::compute::image_format(CL_RGBA, CL_FLOAT))
+				{
+					FUpdateTextureRegion2D* UpdateRegion = new FUpdateTextureRegion2D(0, 0, 0, 0, LandscapeBounds.Max.X + 1, LandscapeBounds.Max.Y + 1);
+
+					Texture->UpdateTextureRegions(0, 1, UpdateRegion, (LandscapeBounds.Max.X + 1) * 16, 16, (uint8*)HeightMap.Heightmap->CreateRawCopy(), [](uint8* Data, const FUpdateTextureRegion2D* UpdateRegion) { delete Data; delete UpdateRegion; });
+				}
+			});
+
+		}
+	}
+}
+
 /*
 void ALandscapeGen::CreateNotification(FHeightmapWrapper HeightInfo, const FText& InText)
 {
@@ -343,6 +416,12 @@ void ALandscapeGen::SetHeightmap(FHeightmapWrapper HeightMap)
 	// Check that the heightmap exists
 	if (HeightMap.Heightmap != nullptr)
 	{
+		if (HeightMap.Heightmap->Image.format() != boost::compute::image_format(CL_R, CL_UNSIGNED_INT16))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Set Heightmap failed"));
+			return;
+		}
+
 		// This has to be added to the queue so that its executed in order
 		LandscapeGeneration::PushKernel([=, this]() -> void
 		{

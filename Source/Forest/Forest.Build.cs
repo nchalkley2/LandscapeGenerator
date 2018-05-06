@@ -19,7 +19,7 @@ public class Forest : ModuleRules
     public Forest(ReadOnlyTargetRules Target) : base(Target)
 	{
         // Get the engine path. Ends with "Engine/"
-        string EnginePath = Path.GetFullPath(BuildConfiguration.RelativeEnginePath);
+        string EnginePath = Path.GetFullPath(Target.RelativeEnginePath);
         // Now get the base of UE4's modules dir (could also be Developer, Editor, ThirdParty)
         string EditorPath = EnginePath + "Source/Editor/";
         string RuntimePath = EnginePath + "Source/Runtime/";
@@ -51,7 +51,7 @@ public class Forest : ModuleRules
                 });
         PublicIncludePaths.AddRange(new string[] { EditorPath + "LandscapeEditor/Private" });
 
-        PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "HeadMountedDisplay", "Landscape", "LandscapeEditor" });
+        PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "HeadMountedDisplay", "Landscape", "LandscapeEditor", "RHI", "RenderCore" });
 
         AddComputePath(Target);
 
