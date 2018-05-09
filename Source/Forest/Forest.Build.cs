@@ -91,7 +91,7 @@ public class Forest : ModuleRules
 
                     PublicIncludePaths.Add(BoostRoot);
                     PublicLibraryPaths.Add(BoostLibDir);
-                    PublicAdditionalLibraries.Add(Path.Combine(BoostLibDir, "libboost_chrono-vc141-mt-1_65_1.lib"));
+                    PublicAdditionalLibraries.Add(Path.Combine(BoostLibDir, "libboost_chrono-vc141-mt-x64-1_67.lib"));
                 }
                 else if (Target.WindowsPlatform.Compiler == WindowsCompiler.VisualStudio2015)
                 {
@@ -99,7 +99,7 @@ public class Forest : ModuleRules
 
                     PublicIncludePaths.Add(BoostRoot);
                     PublicLibraryPaths.Add(BoostLibDir);
-                    PublicAdditionalLibraries.Add(Path.Combine(BoostLibDir, "libboost_chrono-vc140-mt-1_65_1.lib"));
+                    PublicAdditionalLibraries.Add(Path.Combine(BoostLibDir, "libboost_chrono-vc140-mt-x64-1_67.lib"));
                 }
             }
         }

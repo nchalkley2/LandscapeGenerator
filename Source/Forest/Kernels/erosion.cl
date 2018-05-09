@@ -93,11 +93,12 @@ __kernel void calculate_k_factor(
 	float4 flux = read_imagef(inFluxHeight, sampler, (int2)(x, y));
 
 	// This is the scaling factor for the flux. If the flux's magnitude is too large it will scale it down
-	float K = max(1.f, (convert_float(waterHeight) * len) / ((flux.x + flux.y + flux.z + flux.w) * deltaTime));
+	float K = min(1.f, (convert_float(waterHeight) * len) / ((flux.x + flux.y + flux.z + flux.w) * deltaTime));
 
 	flux *= K;
 
 	write_imagef(outFluxHeight, (int2)(x, y), flux);
+	//write_imagef(outFluxHeight, (int2)(x, y), (float4)(1.0f, 1.0f, 0.0f, 1.0f));
 }
 
 __kernel void calculate_water_height_change(

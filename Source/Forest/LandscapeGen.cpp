@@ -131,7 +131,9 @@ UTexture2D* ALandscapeGen::CreateTransientTexture()
 		auto LandscapeRef = Landscape.Get();
 		auto LandscapeBounds = LandscapeRef->GetBoundingRect();
 
-		auto* Texture = UTexture2D::CreateTransient(LandscapeBounds.Max.X + 1, LandscapeBounds.Max.Y + 1, EPixelFormat::PF_FloatRGBA);
+		auto* Texture = UTexture2D::CreateTransient(LandscapeBounds.Max.X + 1, LandscapeBounds.Max.Y + 1, EPixelFormat::PF_A32B32G32R32F);
+		Texture->CompressionSettings = TextureCompressionSettings::TC_VectorDisplacementmap;
+		Texture->SRGB = 0;
 
 		return Texture->UpdateResource(), Texture;
 	}
@@ -146,7 +148,9 @@ UTexture2D* ALandscapeGen::CreateTransientHeightmap()
 		auto LandscapeRef = Landscape.Get();
 		auto LandscapeBounds = LandscapeRef->GetBoundingRect();
 
-		auto* Texture = UTexture2D::CreateTransient(LandscapeBounds.Max.X + 1, LandscapeBounds.Max.Y + 1, EPixelFormat::PF_R16_UINT);
+		auto* Texture = UTexture2D::CreateTransient(LandscapeBounds.Max.X + 1, LandscapeBounds.Max.Y + 1, EPixelFormat::PF_R16F);
+		Texture->CompressionSettings = TextureCompressionSettings::TC_Displacementmap;
+		Texture->SRGB = 0;
 
 		return Texture->UpdateResource(), Texture;
 	}
@@ -169,27 +173,33 @@ void ALandscapeGen::SetTransientHeightmap(UTexture2D* Texture, FHeightmapWrapper
 			// This has to be added to the queue so that its executed in order
 			LandscapeGeneration::PushKernel([=, this]() -> void
 			{
+				FUpdateTextureRegion2D* UpdateRegion = new FUpdateTextureRegion2D(0, 0, 0, 0, HeightMap.Heightmap->Image.width(), HeightMap.Heightmap->Image.height());
+
+				const auto deleteFunction = [](uint8* Data, const FUpdateTextureRegion2D* UpdateRegion) { delete Data; delete UpdateRegion; };
+
 				if (HeightMap.Heightmap->Image.format() == boost::compute::image_format(CL_R, CL_UNSIGNED_INT16))
 				{
-					// Convert the array from unsigned int16 to float
-					TArray<uint16> HeightmapArr = *HeightMap.Heightmap.get();
-					FFloat16* Data = new FFloat16[HeightmapArr.Num()];
-
-					for (int32 i = 0; i < HeightmapArr.Num(); i++)
+					uint16* RawCopy = (uint16*)HeightMap.Heightmap->CreateRawCopy();
+					const auto PxNum = HeightMap.Heightmap->Image.width() * HeightMap.Heightmap->Image.height();
+						
+					for (int32 i = 0; i < PxNum; i++)
 					{
-						Data[i] = HeightmapArr[i];
+						static_assert(sizeof(FFloat16) == sizeof(uint16), "shits fucked");
+						FFloat16 conv = (float)RawCopy[i];
+						RawCopy[i] = *(uint16*)&conv;
 					}
 
-					// What does this even do?
-					FUpdateTextureRegion2D* UpdateRegion = new FUpdateTextureRegion2D(0, 0, 0, 0, LandscapeBounds.Max.X + 1, LandscapeBounds.Max.Y + 1);
-
-					Texture->UpdateTextureRegions(0, 1, UpdateRegion, (LandscapeBounds.Max.X + 1) * 2, 2, (uint8*)Data, [](uint8* Data, const FUpdateTextureRegion2D* UpdateRegion) { delete Data; delete UpdateRegion; });
+					Texture->UpdateTextureRegions(0, 1, UpdateRegion, HeightMap.Heightmap->Image.width() * 2, 2, (uint8*)RawCopy,
+						deleteFunction);
 				}
 				else if (HeightMap.Heightmap->Image.format() == boost::compute::image_format(CL_RGBA, CL_FLOAT))
 				{
-					FUpdateTextureRegion2D* UpdateRegion = new FUpdateTextureRegion2D(0, 0, 0, 0, LandscapeBounds.Max.X + 1, LandscapeBounds.Max.Y + 1);
-
-					Texture->UpdateTextureRegions(0, 1, UpdateRegion, (LandscapeBounds.Max.X + 1) * 16, 16, (uint8*)HeightMap.Heightmap->CreateRawCopy(), [](uint8* Data, const FUpdateTextureRegion2D* UpdateRegion) { delete Data; delete UpdateRegion; });
+					Texture->UpdateTextureRegions(0, 1, UpdateRegion, HeightMap.Heightmap->Image.width() * 16, 16, (uint8*)HeightMap.Heightmap->CreateRawCopy(),
+						deleteFunction);
+				}
+				else
+				{
+					delete UpdateRegion;
 				}
 			});
 

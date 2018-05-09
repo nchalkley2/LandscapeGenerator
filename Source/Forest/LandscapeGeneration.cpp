@@ -354,14 +354,27 @@ namespace LandscapeGeneration
 				waterHeight->Image,		// Water Height out
 				(cl_uint) 1000u,		// Seed
 				(cl_float) 0.1f,		// DeltaTime
-				(cl_float) 1.f			// WaterMul
+				(cl_float) 100.f		// WaterMul
 			);
+			
+			for (int i = 0; i < 100; i++)
+			{
+				rainfall_kernel.set_args(
+					waterHeight->Image,		// Water Height in
+					waterHeight->Image,		// Water Height out
+					(cl_uint)1000u + i,		// Seed
+					(cl_float) 0.1f,		// DeltaTime
+					(cl_float) 100.f			// WaterMul
+				);
 
-			CommandQueue->enqueue_nd_range_kernel(rainfall_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
+				CommandQueue->enqueue_nd_range_kernel(rainfall_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
+			}
+
+			Heightmap = waterHeight.get()->Image;
 
 
 			// Calculate flux and ping-pong flux images
-			{
+			/*{
 				// Calculates the flux
 				compute::kernel flux_kernel(program, "flux");
 				flux_kernel.set_args(
@@ -389,7 +402,7 @@ namespace LandscapeGeneration
 
 				// Make sure to ping-pong after k factor
 				//std::swap(inFluxImage, outFluxImage);
-			}
+			}*/
 
 			/*
 			compute::kernel calculate_water_height_kernel(program, "calculate_water_height_change");
