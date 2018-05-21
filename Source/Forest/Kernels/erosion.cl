@@ -23,8 +23,8 @@ __kernel void rainfall(
 	rainAmt 		= rainAmt * waterMul * deltaTime;
 
 	// Read the last frames value
-	uint4 value = read_imageui(inWaterHeight, sampler, (int2)(x, y));
-	write_imageui(outWaterHeight, (int2)(x, y), (uint) rainAmt + value.x);
+	float4 value = read_imagef(inWaterHeight, sampler, (int2)(x, y));
+	write_imagef(outWaterHeight, (int2)(x, y), rainAmt + value.x);
 }
 
 
@@ -51,7 +51,7 @@ __kernel void flux(
 	float4 lastflux = read_imagef(inFluxHeight, sampler, (int2)(x, y));
 
 	uint4 height = convert_uint4(read_imageui(inHeight, sampler, (int2)(x,y)).xxxx);
-	uint4 waterHeight = convert_uint4(read_imageui(inWaterHeight, sampler, (int2)(x,y)).xxxx);
+	float4 waterHeight = convert_float4(read_imagef(inWaterHeight, sampler, (int2)(x,y)).xxxx);
 
 	uint4 heightAdj =
 	{
@@ -61,18 +61,19 @@ __kernel void flux(
 		read_imageui(inHeight, sampler, (int2)(x,y - 1)).x
 	};
 
-	uint4 waterHeightAdj =
+	float4 waterHeightAdj =
 	{
-		read_imageui(inWaterHeight, sampler, (int2)(x - 1,y)).x,
-		read_imageui(inWaterHeight, sampler, (int2)(x + 1,y)).x,
-		read_imageui(inWaterHeight, sampler, (int2)(x,y + 1)).x,
-		read_imageui(inWaterHeight, sampler, (int2)(x,y - 1)).x
+		read_imagef(inWaterHeight, sampler, (int2)(x - 1,y)).x,
+		read_imagef(inWaterHeight, sampler, (int2)(x + 1,y)).x,
+		read_imagef(inWaterHeight, sampler, (int2)(x,y + 1)).x,
+		read_imagef(inWaterHeight, sampler, (int2)(x,y - 1)).x
 	};
 
-	int4 heightDif = convert_int4(waterHeight + height) - convert_int4(waterHeightAdj + heightAdj);
+	float4 heightDif = (waterHeight + convert_float4(height)) - (waterHeightAdj + convert_float4(heightAdj));
 
 	float4 fluxHeight = max((float4)(0.f, 0.f, 0.f, 0.f),
 		lastflux + (deltaTime * area * ((grav * convert_float4(heightDif) / len))));
+		//(deltaTime * area * ((grav * convert_float4(heightDif) / len))));
 
 	write_imagef(outFluxHeight, (int2)(x, y), fluxHeight);
 }

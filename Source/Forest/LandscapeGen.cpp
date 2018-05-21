@@ -168,20 +168,21 @@ void ALandscapeGen::SetTransientHeightmap(UTexture2D* Texture, FHeightmapWrapper
 		UE_LOG(LogTemp, Warning, TEXT("Set Transient Heightmap"));
 
 		// Check that the heightmap exists
-		if (HeightMap.Heightmap != nullptr)
+		if (HeightMap.Heightmap != nullptr && Texture != nullptr)
 		{
 			// This has to be added to the queue so that its executed in order
 			LandscapeGeneration::PushKernel([=, this]() -> void
 			{
 				FUpdateTextureRegion2D* UpdateRegion = new FUpdateTextureRegion2D(0, 0, 0, 0, HeightMap.Heightmap->Image.width(), HeightMap.Heightmap->Image.height());
 
-				const auto deleteFunction = [](uint8* Data, const FUpdateTextureRegion2D* UpdateRegion) { delete Data; delete UpdateRegion; };
+				const auto deleteFunction = [](uint8* Data, const FUpdateTextureRegion2D* UpdateRegion) { delete[] Data; delete UpdateRegion; };
 
 				if (HeightMap.Heightmap->Image.format() == boost::compute::image_format(CL_R, CL_UNSIGNED_INT16))
 				{
 					uint16* RawCopy = (uint16*)HeightMap.Heightmap->CreateRawCopy();
 					const auto PxNum = HeightMap.Heightmap->Image.width() * HeightMap.Heightmap->Image.height();
-						
+					
+					// Convert in place
 					for (int32 i = 0; i < PxNum; i++)
 					{
 						static_assert(sizeof(FFloat16) == sizeof(uint16), "shits fucked");
@@ -190,6 +191,23 @@ void ALandscapeGen::SetTransientHeightmap(UTexture2D* Texture, FHeightmapWrapper
 					}
 
 					Texture->UpdateTextureRegions(0, 1, UpdateRegion, HeightMap.Heightmap->Image.width() * 2, 2, (uint8*)RawCopy,
+						deleteFunction);
+				}
+				else if (HeightMap.Heightmap->Image.format() == boost::compute::image_format(CL_R, CL_FLOAT))
+				{
+					UE_LOG(LogTemp, Warning, TEXT("CL_R, CL_FLOAT"));
+					float* RawCopy = (float*)HeightMap.Heightmap->CreateRawCopy();
+					const auto PxNum = HeightMap.Heightmap->Image.width() * HeightMap.Heightmap->Image.height();
+					FFloat16* ConvCopy = new FFloat16[PxNum];
+					
+					for (int32 i = 0; i < PxNum; i++)
+					{
+						ConvCopy[i] = RawCopy[i];
+					}
+
+					delete[] RawCopy;
+
+					Texture->UpdateTextureRegions(0, 1, UpdateRegion, HeightMap.Heightmap->Image.width() * 2, 2, (uint8*)ConvCopy,
 						deleteFunction);
 				}
 				else if (HeightMap.Heightmap->Image.format() == boost::compute::image_format(CL_RGBA, CL_FLOAT))
@@ -207,10 +225,10 @@ void ALandscapeGen::SetTransientHeightmap(UTexture2D* Texture, FHeightmapWrapper
 	}
 }
 
-/*
-void ALandscapeGen::CreateNotification(FHeightmapWrapper HeightInfo, const FText& InText)
+// Fix this, has to be called from game thread
+TFuture<TSharedPtr<SNotificationItem>> ALandscapeGen::CreateNotification(const FText& InText)
 {
-	AsyncTask(ENamedThreads::GameThread, [=]()
+	return Async<TSharedPtr<SNotificationItem>>(EAsyncExecution::Thread, [=]()//ENamedThreads::GameThread, [=]()
 	{
 		FNotificationInfo Info(InText);
 		Info.FadeInDuration = 0.1f;
@@ -225,11 +243,12 @@ void ALandscapeGen::CreateNotification(FHeightmapWrapper HeightInfo, const FText
 
 		NotificationItem->SetCompletionState(SNotificationItem::CS_Pending);
 
-		HeightInfo->Notifications.Add(NotificationItem);
+		return NotificationItem;
 	});
 }
 
-void ALandscapeGen::FinishNotification(FHeightmapWrapper HeightInfo, const FText& InText, bool bFailure)
+
+/*void ALandscapeGen::FinishNotification(FHeightmapWrapper HeightInfo, const FText& InText, bool bFailure)
 {
 	AsyncTask(ENamedThreads::GameThread, [&]()
 	{
@@ -251,8 +270,8 @@ void ALandscapeGen::FinishNotification(FHeightmapWrapper HeightInfo, const FText
 		NotificationItem->SetCompletionState(bFailure ? SNotificationItem::CS_Fail : SNotificationItem::CS_Success);
 		NotificationItem->ExpireAndFadeout();
 	});
-}
-*/
+}*/
+
 
 FHeightmapWrapper ALandscapeGen::Constant(int32 Height)
 {
@@ -376,15 +395,21 @@ FHeightmapWrapper ALandscapeGen::Erode_Landscape(FHeightmapWrapper HeightmapInpu
 	LandscapeGeneration::PushKernel([=]() -> void
 	{
 		//CreateNotification(OutFuture, LOCTEXT("LandscapeGenNotifications", "Generating Perlin Noise..."));
+		auto NotificationFuture = CreateNotification(LOCTEXT("LandscapeGenNotifications", "Simulating erosion..."));
 
 		catch_error([=]() -> void
 		{
 			LandscapeGeneration::Kernels::Erosion(HeightmapInput.Heightmap->Image);
-		}); //?
-			// Notify the user that a kernel finished
-			//FinishNotification(OutFuture, LOCTEXT("LandscapeGenNotifications", "Finished Generating Perlin Noise"), false) :
-			// Notify the user that a kernel failed
-			//FinishNotification(OutFuture, LOCTEXT("LandscapeGenNotifications", "Failed Generating Perlin Noise"), true);
+		}); 
+		
+		NotificationFuture.Wait();
+		auto Notification = NotificationFuture.Get();
+
+		AsyncTask(ENamedThreads::GameThread, [=]()
+		{
+			Notification->SetCompletionState(SNotificationItem::CS_Success);
+			Notification->ExpireAndFadeout();
+		});
 	});
 
 	return HeightmapInput;

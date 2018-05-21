@@ -3,6 +3,7 @@
 #pragma once
 
 #include "Core.h"
+#include "Function.h"
 #include "GameFramework/Actor.h"
 
 #include "LandscapeGeneration.h"
@@ -78,7 +79,7 @@ protected:
 
 	TArray<uint16> GetLandscapeHeightmapSorted();
 
-	//void CreateNotification(FHeightMapInfoWrapper HeightInfo, const FText& InText);
+	TFuture<TSharedPtr<SNotificationItem>> CreateNotification(const FText& InText);
 	//void FinishNotification(FHeightMapInfoWrapper HeightInfo, const FText& InText, bool bFailure);
 
 public:	
