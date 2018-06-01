@@ -225,10 +225,12 @@ void ALandscapeGen::SetTransientHeightmap(UTexture2D* Texture, FHeightmapWrapper
 	}
 }
 
-// Fix this, has to be called from game thread
-TFuture<TSharedPtr<SNotificationItem>> ALandscapeGen::CreateNotification(const FText& InText)
+std::future<TSharedPtr<SNotificationItem>> ALandscapeGen::CreateNotification(const FText& InText)
 {
-	return Async<TSharedPtr<SNotificationItem>>(EAsyncExecution::Thread, [=]()//ENamedThreads::GameThread, [=]()
+	using NotificationPromiseT = std::promise<TSharedPtr<SNotificationItem>>;
+	std::shared_ptr<NotificationPromiseT> NotificationPromise(new NotificationPromiseT());
+	
+	AsyncTask(ENamedThreads::GameThread, [NotificationPromise, InText]()
 	{
 		FNotificationInfo Info(InText);
 		Info.FadeInDuration = 0.1f;
@@ -243,8 +245,10 @@ TFuture<TSharedPtr<SNotificationItem>> ALandscapeGen::CreateNotification(const F
 
 		NotificationItem->SetCompletionState(SNotificationItem::CS_Pending);
 
-		return NotificationItem;
+		NotificationPromise->set_value(NotificationItem);
 	});
+
+	return NotificationPromise->get_future();
 }
 
 
@@ -402,8 +406,8 @@ FHeightmapWrapper ALandscapeGen::Erode_Landscape(FHeightmapWrapper HeightmapInpu
 			LandscapeGeneration::Kernels::Erosion(HeightmapInput.Heightmap->Image);
 		}); 
 		
-		NotificationFuture.Wait();
-		auto Notification = NotificationFuture.Get();
+		NotificationFuture.wait();
+		auto Notification = NotificationFuture.get();
 
 		AsyncTask(ENamedThreads::GameThread, [=]()
 		{

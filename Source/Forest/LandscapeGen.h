@@ -9,6 +9,7 @@
 #include "LandscapeGeneration.h"
 
 #include <memory>
+#include <future>
 
 #include "LandscapeGen.generated.h"
 
@@ -79,7 +80,7 @@ protected:
 
 	TArray<uint16> GetLandscapeHeightmapSorted();
 
-	TFuture<TSharedPtr<SNotificationItem>> CreateNotification(const FText& InText);
+	std::future<TSharedPtr<SNotificationItem>> CreateNotification(const FText& InText);
 	//void FinishNotification(FHeightMapInfoWrapper HeightInfo, const FText& InText, bool bFailure);
 
 public:	

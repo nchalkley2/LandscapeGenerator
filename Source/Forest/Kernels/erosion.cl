@@ -4,6 +4,8 @@ inline float rand(int2 co, int seed)
 	return fract(sin(dot((float2)(co.x + seed, co.y + seed), (float2)(12.9898, 78.233))) * 43758.5453, &garbage);
 }
 
+const sampler_t sampler = CLK_ADDRESS_NONE | CLK_FILTER_NEAREST;
+
 // Take an input Water Height map and add a random amount of rain to it
 __kernel void rainfall(
 	__read_only image2d_t 	inWaterHeight, // These can be the same value
@@ -15,7 +17,6 @@ __kernel void rainfall(
 {
 	int x = get_global_id(0);
 	int y = get_global_id(1);
-	const sampler_t sampler = CLK_ADDRESS_NONE | CLK_FILTER_NEAREST;
 
 	// Calculate a random value
 	float rainAmt 	= perlin2d((float)x, (float)y, 1.f / 1.f, 2, 4);
@@ -42,7 +43,6 @@ __kernel void flux(
 
 	int x = get_global_id(0);
 	int y = get_global_id(1);
-	const sampler_t sampler = CLK_ADDRESS_NONE | CLK_FILTER_NEAREST;
 
 	const float grav = 980.665f;
 	const float area = 1.f;
@@ -86,7 +86,6 @@ __kernel void calculate_k_factor(
 {
 	int x = get_global_id(0);
 	int y = get_global_id(1);
-	const sampler_t sampler = CLK_ADDRESS_NONE | CLK_FILTER_NEAREST;
 
 	const float len = 1.f;
 
@@ -110,7 +109,6 @@ __kernel void calculate_water_height_change(
 {
 	int x = get_global_id(0);
 	int y = get_global_id(1);
-	const sampler_t sampler = CLK_ADDRESS_NONE | CLK_FILTER_NEAREST;
 
 	const float len = 1.f;
 
@@ -144,7 +142,6 @@ __kernel void calculate_velocity(
 {
 	int x = get_global_id(0);
 	int y = get_global_id(1);
-	const sampler_t sampler = CLK_ADDRESS_NONE | CLK_FILTER_NEAREST;
 
 	const float len = 1.f;
 
@@ -170,10 +167,10 @@ __kernel void calculate_velocity(
 
 	float4 velocity =
 	{
-		(fluxAdj.x - flux.x + flux.y - fluxAdj.y) / 2.f, // velocity x
-		(fluxAdj.z - flux.z + flux.w - fluxAdj.w) / 2.f, // velocity y
-		0.0,
-		0.0
+		((fluxAdj.x - flux.x) + (flux.y - fluxAdj.y)) / 2.f, // velocity x
+		((fluxAdj.z - flux.z) + (flux.w - fluxAdj.w)) / 2.f, // velocity y
+		0.f,
+		0.f
 	};
 
 	write_imagef(outVelocity, (int2)(x, y), velocity);
@@ -184,7 +181,6 @@ inline float2 calculateNrm(
 {
 	int x = get_global_id(0);
 	int y = get_global_id(1);
-	const sampler_t sampler = CLK_ADDRESS_NONE | CLK_FILTER_NEAREST;
 
 	float4 heightAdj =
 	{
@@ -212,35 +208,38 @@ inline float calculateSinTiltAngle(
 	float2 nrmVec = calculateNrm(inHeight);
 
 	// This is the cos^2 of the tilt angle 
-	float vecCos = 1.0 / (1.0 + nrmVec.x * nrmVec.x + nrmVec.y * nrmVec.y);
+	float vecCos = 1.f / (1.f + (nrmVec.x * nrmVec.x) + (nrmVec.y * nrmVec.y));
 
 	// sin = sqrt(1 - cos^2)
-	return sqrt(1.0 - vecCos);
+	return sqrt(1.f - vecCos);
 }
 
 inline float lmax(const float waterHeight, const float maxErosionDepth)
 {
 	if (waterHeight <= 0)
-		return 0.0;
+		return 0.f;
 	else if (waterHeight >= maxErosionDepth)
-		return 1.0;
+		return 1.f;
 	else // if (x > 0 && x < maxErosionDepth)
-		return 1.0 - ((maxErosionDepth - waterHeight) / maxErosionDepth);
+		return 1.f - ((maxErosionDepth - waterHeight) / maxErosionDepth);
 }
 
-float calculate_sediment_capacity(
+__kernel void calculate_sediment_capacity(
 	const float sedimentCapacity,
+	const float maxErosionDepth,
 	__read_only image2d_t	inHeight,
-	__read_only image2d_t 	inVelocity)
+	__read_only image2d_t	inWaterHeight,
+	__read_only image2d_t 	inVelocity,
+	__write_only image2d_t	outSedimentCapacity)
 {
 	int x = get_global_id(0);
 	int y = get_global_id(1);
 
-	const sampler_t sampler = CLK_ADDRESS_NONE | CLK_FILTER_NEAREST;
-
 	float velocityMagnitude = length(read_imagef(inVelocity, sampler, (int2)(x, y)).xy);
+	uint waterHeight = read_imageui(inWaterHeight, sampler, (int2)(x, y)).x;
 
-	return sedimentCapacity * calculateSinTiltAngle(inHeight) * velocityMagnitude;
+	write_imagef(outSedimentCapacity, (int2)(x, y), 
+		sedimentCapacity * calculateSinTiltAngle(inHeight) * velocityMagnitude * lmax((float)waterHeight, maxErosionDepth));
 }
 
 /*
