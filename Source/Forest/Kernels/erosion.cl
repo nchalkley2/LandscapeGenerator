@@ -238,8 +238,10 @@ __kernel void calculate_sediment_capacity(
 	float velocityMagnitude = length(read_imagef(inVelocity, sampler, (int2)(x, y)).xy);
 	uint waterHeight = read_imageui(inWaterHeight, sampler, (int2)(x, y)).x;
 
-	write_imagef(outSedimentCapacity, (int2)(x, y), 
-		sedimentCapacity * calculateSinTiltAngle(inHeight) * velocityMagnitude * lmax((float)waterHeight, maxErosionDepth));
+	float2 nrm = calculateNrm(inHeight);
+
+	write_imagef(outSedimentCapacity, (int2)(x, y),
+		(float4)(nrm.x, nrm.y, 0.f, 0.f));//sedimentCapacity * calculateSinTiltAngle(inHeight) * velocityMagnitude * lmax((float)waterHeight, maxErosionDepth));
 }
 
 /*
