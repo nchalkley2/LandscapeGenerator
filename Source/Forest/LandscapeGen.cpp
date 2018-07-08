@@ -234,8 +234,8 @@ std::future<TSharedPtr<SNotificationItem>> ALandscapeGen::CreateNotification(con
 	{
 		FNotificationInfo Info(InText);
 		Info.FadeInDuration = 0.1f;
-		Info.FadeOutDuration = 5.0f;
-		Info.ExpireDuration = 5.5f;
+		Info.FadeOutDuration = 0.0f;
+		Info.ExpireDuration = 0.f;
 		Info.bUseThrobber = true;
 		Info.bUseSuccessFailIcons = true;
 		Info.bUseLargeFont = true;

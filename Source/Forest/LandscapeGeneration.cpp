@@ -21,51 +21,15 @@
 #include <atomic>
 #include <array>
 
-using namespace std;
-namespace compute = boost::compute;
-
-// Same as the old program, except that it outputs the debug to UE_LOG
-class ue_compute_program : public boost::compute::program
-{
-public:
-	void build(const std::string &options = std::string())
-	{
-		const char *options_string = 0;
-
-		if (!options.empty()) {
-			options_string = options.c_str();
-		}
-
-		cl_int ret = clBuildProgram(get(), 0, 0, options_string, 0, 0);
-
-#ifdef BOOST_COMPUTE_DEBUG_KERNEL_COMPILATION
-		if (ret != CL_SUCCESS) {
-			std::stringstream errorstringstream;
-			// print the error, source code and build log
-			errorstringstream << "Boost.Compute: "
-				<< "kernel compilation failed (" << ret << ")\n"
-				<< "--- source ---\n"
-				<< source()
-				<< "\n--- build log ---\n"
-				<< build_log()
-				<< std::endl;
-
-			std::string errorstring(errorstringstream.str());
-
-			UE_LOG(LogTemp, Warning, TEXT("%s"), ANSI_TO_TCHAR(errorstring.c_str()));
-		}
-#endif
-
-		//if (ret != CL_SUCCESS) {
-		//	BOOST_THROW_EXCEPTION(opencl_error(ret));
-		//}
-	}
-};
+#include "LandscapeGeneration.inl"
 
 #include <io.h>  
 #include <stdlib.h>  
 #include <cstdio>
 #include <cstring>
+
+using namespace std;
+namespace compute = boost::compute;
 
 namespace LandscapeGeneration
 {
@@ -211,7 +175,7 @@ namespace LandscapeGeneration
 
 			// build box filter program
 			compute::program program =
-				compute::program::create_with_source_file({ GetKernelsPath() + "perlin.cl" }, *Context.get());
+				create_with_source_file({ GetKernelsPath() + "perlin.cl" }, *Context.get());
 
 			program.build("-I \"" + GetKernelsPath() + "\"");
 
@@ -238,7 +202,7 @@ namespace LandscapeGeneration
 
 			// build box filter program
 			compute::program program =
-				compute::program::create_with_source_file({ GetKernelsPath() + "perlin.cl", GetKernelsPath() + "warpedperlin.cl" }, *Context.get());
+				create_with_source_file({ GetKernelsPath() + "perlin.cl", GetKernelsPath() + "warpedperlin.cl" }, *Context.get());
 
 			program.build("-I \"" + GetKernelsPath() + "\"");
 
@@ -268,7 +232,7 @@ namespace LandscapeGeneration
 			using compute::dim;
 
 			compute::program program =
-				compute::program::create_with_source_file({ GetKernelsPath() + "mix.cl" }, *Context.get());
+				create_with_source_file({ GetKernelsPath() + "mix.cl" }, *Context.get());
 
 			program.build("-I \"" + GetKernelsPath() + "\"");
 
@@ -295,7 +259,7 @@ namespace LandscapeGeneration
 
 			// build box filter program
 			compute::program program =
-				compute::program::create_with_source_file({ GetKernelsPath() + "perlin.cl", GetKernelsPath() + "voronoi.cl" }, *Context.get());
+				create_with_source_file({ GetKernelsPath() + "perlin.cl", GetKernelsPath() + "voronoi.cl" }, *Context.get());
 
 			program.build("-I \"" + GetKernelsPath() + "\"");
 
@@ -338,14 +302,44 @@ namespace LandscapeGeneration
 			const auto WaterImageFormat = compute::image_format(CL_R, CL_FLOAT);
 
 			auto waterHeight	= CreateHeightmap(Heightmap.width(), Heightmap.height(), WaterImageFormat);
+			auto hardness		= CreateHeightmap(Heightmap.width(), Heightmap.height(), WaterImageFormat);
+			auto sediment		= CreateHeightmap(Heightmap.width(), Heightmap.height(), WaterImageFormat);
 			auto sedimentCap	= CreateHeightmap(Heightmap.width(), Heightmap.height(), WaterImageFormat);
 			
 			auto inFluxImage	= CreateHeightmap(Heightmap.width(), Heightmap.height(), FluxImageFormat);
 			auto outFluxImage	= CreateHeightmap(Heightmap.width(), Heightmap.height(), FluxImageFormat);
 			auto velocityImage	= CreateHeightmap(Heightmap.width(), Heightmap.height(), FluxImageFormat);
 
+			{
+				const char source[] = BOOST_COMPUTE_STRINGIZE_SOURCE(
+					__kernel void hardness_const(
+						__write_only image2d_t  outputImage
+					)
+				{
+					const sampler_t sampler = CLK_NORMALIZED_COORDS_FALSE |
+						CLK_ADDRESS_CLAMP_TO_EDGE |
+						CLK_FILTER_NEAREST;
+
+					// Store each work-item's unique row and column
+					int x = get_global_id(0);
+					int y = get_global_id(1);
+
+					write_imagef(outputImage, (int2)(x, y), 1.f);
+				}
+				);
+
+				compute::program hardness_program = boost::compute::program::create_with_source(source, *Context.get());
+
+				hardness_program.build();
+				compute::kernel hardness_const_kernel(hardness_program, "hardness_const");
+
+				hardness_const_kernel.set_arg(0, hardness->Image);
+				CommandQueue->enqueue_nd_range_kernel(hardness_const_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
+				CommandQueue->finish();
+			}
+
 			compute::program program =
-				compute::program::create_with_source_file({ GetKernelsPath() + "perlin.cl", GetKernelsPath() + "erosion.cl" }, *Context.get());
+				create_with_source_file({ GetKernelsPath() + "perlin.cl", GetKernelsPath() + "erosion.cl" }, *Context.get());
 
 			((ue_compute_program*)(&program))->build("-I \"" + GetKernelsPath() + "\"");
 			
@@ -355,6 +349,7 @@ namespace LandscapeGeneration
 			compute::kernel k_factor_kernel(program, "calculate_k_factor");
 			compute::kernel calculate_velocity_kernel(program, "calculate_velocity");
 			compute::kernel calculate_sediment_capacity_kernel(program, "calculate_sediment_capacity");
+			compute::kernel calculate_erosion_deposition_kernel(program, "calculate_erosion_deposition");
 			
 			for (int i = 0; i < 100; i++)
 			{
@@ -362,15 +357,15 @@ namespace LandscapeGeneration
 					waterHeight->Image,		// Water Height in
 					waterHeight->Image,		// Water Height out
 					(cl_uint)1000u + i,		// Seed
-					(cl_float)DeltaTime,		// DeltaTime
-					(cl_float) 10.f			// WaterMul
+					(cl_float)DeltaTime,	// DeltaTime
+					(cl_float)10.f			// WaterMul
 				);
 
 				CommandQueue->enqueue_nd_range_kernel(rainfall_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
 				CommandQueue->finish();
 			}
 
-			for (int i = 0; i < 100; i++)
+			for (int i = 0; i < 50; i++)
 			{
 				// Calculate flux and ping-pong flux images
 				{
@@ -412,30 +407,47 @@ namespace LandscapeGeneration
 
 				CommandQueue->enqueue_nd_range_kernel(calculate_water_height_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
 				CommandQueue->finish();
+
+				calculate_velocity_kernel.set_args(
+					inFluxImage->Image,		// Flux in
+					velocityImage->Image,	// Velocity out
+					(cl_float) 0.1f			// DeltaTime
+				);
+
+				CommandQueue->enqueue_nd_range_kernel(calculate_velocity_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
+				CommandQueue->finish();
+
+				calculate_sediment_capacity_kernel.set_args(
+					(cl_float) 1.f,			// Sediment capacity
+					(cl_float) 1024.f,			// maxErosionDepth
+					Heightmap,				// Terrain Height in
+					waterHeight->Image,		// Water height in
+					velocityImage->Image,	// Velocity in
+					sedimentCap->Image		// Sediment Capacity Out
+				);
+
+				CommandQueue->enqueue_nd_range_kernel(calculate_sediment_capacity_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
+				CommandQueue->finish();
+
+				calculate_erosion_deposition_kernel.set_args(
+					Heightmap,				// Terrain Height in
+					Heightmap,				// Terrain Height out
+					hardness->Image,		// Terrain Hardness in
+					sediment->Image,		// Sediment in
+					sedimentCap->Image,		// Sediment capacity in
+
+					(cl_float) 0.1f,		// deposition speed
+					(cl_float) 1.f,			// sedimentCoefficient
+					(cl_float) 0.01f,		// softeningCoefficient
+					(cl_float) 0.1f,		// hardnessMin
+					(cl_float)DeltaTime
+				);
+
+				CommandQueue->enqueue_nd_range_kernel(calculate_erosion_deposition_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
+				CommandQueue->finish();
 			}
 
-			calculate_velocity_kernel.set_args(
-				inFluxImage->Image,		// Flux in
-				velocityImage->Image,	// Velocity out
-				(cl_float) 0.1f			// DeltaTime
-			);
-
-			CommandQueue->enqueue_nd_range_kernel(calculate_velocity_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
-			CommandQueue->finish();
-
-			calculate_sediment_capacity_kernel.set_args(
-				(cl_float) 1.f,			// Sediment capacity
-				(cl_float) 1.f,			// maxErosionDepth
-				Heightmap,				// Terrain Height in
-				waterHeight->Image,		// Water height in
-				velocityImage->Image,	// Velocity in
-				sedimentCap->Image		// Sediment Capacity Out
-			);
-
-			CommandQueue->enqueue_nd_range_kernel(calculate_sediment_capacity_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
-			CommandQueue->finish();
-
-			Heightmap = sedimentCap->Image;
+			//Heightmap = sedimentCap->Image;
 
 			//compute::copy(
 			//	hostBuffer.begin(), hostBuffer.end(), buffer.begin(), *CommandQueue.get()

@@ -1,10 +1,10 @@
-inline float rand(int2 co, int seed)
+﻿inline float rand(int2 co, int seed)
 {
 	float garbage = 0.f;
 	return fract(sin(dot((float2)(co.x + seed, co.y + seed), (float2)(12.9898, 78.233))) * 43758.5453, &garbage);
 }
 
-const sampler_t sampler = CLK_ADDRESS_NONE | CLK_FILTER_NEAREST;
+const sampler_t sampler = CLK_ADDRESS_NONE | CLK_FILTER_NEAREST | CLK_ADDRESS_CLAMP_TO_EDGE;
 
 // Take an input Water Height map and add a random amount of rain to it
 __kernel void rainfall(
@@ -24,8 +24,10 @@ __kernel void rainfall(
 	rainAmt 		= rainAmt * waterMul * deltaTime;
 
 	// Read the last frames value
-	float4 value = read_imagef(inWaterHeight, sampler, (int2)(x, y));
-	write_imagef(outWaterHeight, (int2)(x, y), rainAmt + value.x);
+	//float4 value = read_imagef(inWaterHeight, sampler, (int2)(x, y));
+	//write_imagef(outWaterHeight, (int2)(x, y), rainAmt + value.x);
+
+	write_imagef(outWaterHeight, (int2)(x, y), 100.f);
 }
 
 
@@ -44,7 +46,7 @@ __kernel void flux(
 	int x = get_global_id(0);
 	int y = get_global_id(1);
 
-	const float grav = 980.665f;
+	const float grav = 0.980665f;
 	const float area = 1.f;
 	const float len = 1.f;
 
@@ -177,7 +179,8 @@ __kernel void calculate_velocity(
 }
 
 inline float2 calculateNrm(
-	__read_only image2d_t inHeight)
+	__read_only image2d_t inHeight,
+	bool bNormalize)
 {
 	int x = get_global_id(0);
 	int y = get_global_id(1);
@@ -193,30 +196,35 @@ inline float2 calculateNrm(
 	float height = (float)read_imageui(inHeight, sampler, (int2)(x, y)).x;
 
 	// X+ Y+
-	float2 nrmVec =
+	float2 nrm =
 	{
-		(heightAdj.x - height) + (height - heightAdj.y),
-		(heightAdj.z - height) + (height - heightAdj.w)
+		//(heightAdj.y - heightAdj.x) / 2.f,
+		//(heightAdj.z - heightAdj.w) / 2.f,
+		(heightAdj.x - height) + (height - heightAdj.y) / 2.f,
+		(heightAdj.z - height) + (height - heightAdj.w) / 2.f
+		//1.f
 	};
 
-	return normalize(nrmVec);
+	return bNormalize ? normalize(nrm) : nrm;
 }
 
 inline float calculateSinTiltAngle(
 	__read_only image2d_t inHeight)
 {
-	float2 nrmVec = calculateNrm(inHeight);
+	float2 nrmVec = calculateNrm(inHeight, true);
 
 	// This is the cos^2 of the tilt angle 
-	float vecCos = 1.f / (1.f + (nrmVec.x * nrmVec.x) + (nrmVec.y * nrmVec.y));
+	//float vecCos = 1.f / (1.f + (nrmVec.x * nrmVec.x) + (nrmVec.y * nrmVec.y));
+	float sin = sqrt((nrmVec.x * nrmVec.x) + (nrmVec.y * nrmVec.y)) / sqrt(1.f + (nrmVec.x * nrmVec.x) + (nrmVec.y * nrmVec.y));
 
 	// sin = sqrt(1 - cos^2)
-	return sqrt(1.f - vecCos);
+	//return vecCos;
+	return sin;
 }
 
 inline float lmax(const float waterHeight, const float maxErosionDepth)
 {
-	if (waterHeight <= 0)
+	if (waterHeight <= 0.f)
 		return 0.f;
 	else if (waterHeight >= maxErosionDepth)
 		return 1.f;
@@ -235,13 +243,84 @@ __kernel void calculate_sediment_capacity(
 	int x = get_global_id(0);
 	int y = get_global_id(1);
 
-	float velocityMagnitude = length(read_imagef(inVelocity, sampler, (int2)(x, y)).xy);
+	float2 velocity = read_imagef(inVelocity, sampler, (int2)(x, y)).xy;
 	uint waterHeight = read_imageui(inWaterHeight, sampler, (int2)(x, y)).x;
 
-	float2 nrm = calculateNrm(inHeight);
+	float2 nrm = calculateNrm(inHeight, true);
 
 	write_imagef(outSedimentCapacity, (int2)(x, y),
-		(float4)(nrm.x, nrm.y, 0.f, 0.f));//sedimentCapacity * calculateSinTiltAngle(inHeight) * velocityMagnitude * lmax((float)waterHeight, maxErosionDepth));
+		//sedimentCapacity * calculateSinTiltAngle(inHeight) * velocityMagnitude * lmax((float)waterHeight, maxErosionDepth));
+		sedimentCapacity * dot(-nrm, normalize(velocity)) * length(velocity) * lmax((float)waterHeight, maxErosionDepth));
+		//length(velocity));
+		//100.f);
+		//(float4)(read_imagef(inVelocity, sampler, (int2)(x, y)).x, read_imagef(inVelocity, sampler, (int2)(x, y)).y, 0.f, 0.f));
+		//(float4)(velocity.x, velocity.y, 0.f, 0.f));
+}
+
+float calculate_hardness_coefficient(
+	__read_only image2d_t	inHardness,
+	__read_only image2d_t	inSediment,
+	__read_only image2d_t	inSedimentCapacity,
+	const float sedimentCoefficient,
+	const float softeningCoefficient,
+	const float hardnessMin,
+	const float deltaTime
+)
+{
+	int x = get_global_id(0);
+	int y = get_global_id(1);
+
+	float hardness = read_imagef(inHardness, sampler, (int2)(x, y)).x;
+	float sediment = read_imagef(inSediment, sampler, (int2)(x, y)).x;
+	float sedimentCapacity = read_imagef(inSedimentCapacity, sampler, (int2)(x, y)).x;
+	sedimentCapacity = 512.f;
+
+	return max(hardnessMin, hardness - (deltaTime * softeningCoefficient * sedimentCoefficient * (sediment - sedimentCapacity)));
+}
+
+__kernel void calculate_erosion_deposition(
+	__read_only image2d_t	inHeight,
+	__write_only image2d_t	outHeight,
+	__read_only image2d_t	inHardness,
+	__read_only image2d_t	inSediment,
+	__read_only image2d_t	inSedimentCapacity,
+	float depositionSpeed,
+	float sedimentCoefficient,
+	float softeningCoefficient,
+	float hardnessMin,
+	float deltaTime
+)
+{
+	int x = get_global_id(0);
+	int y = get_global_id(1);
+
+	float height = (float)read_imageui(inHeight, sampler, (int2)(x, y)).x;
+	float hardness = read_imagef(inHardness, sampler, (int2)(x, y)).x;
+	float sediment = read_imagef(inSediment, sampler, (int2)(x, y)).x;
+	float sedimentCapacity = read_imagef(inSedimentCapacity, sampler, (int2)(x, y)).x;
+	float hardnessCoefficient = calculate_hardness_coefficient(inHardness, inSediment, inSedimentCapacity, 
+		sedimentCoefficient, softeningCoefficient, hardnessMin, deltaTime);
+
+	if (sediment < sedimentCapacity)
+	{	// bt+∆t = bt −∆t · Rt(x, y) · Ks(C − st)
+		height = height - (deltaTime * hardnessCoefficient * sedimentCoefficient * (sedimentCapacity - sediment));
+		//height = hardnessCoefficient;//(deltaTime * hardnessCoefficient * sedimentCoefficient * (sedimentCapacity - sediment));
+		//height = 0.f;
+	}
+	else
+	{	// bt+∆t = bt + ∆t · Kd(st −C)
+		height = height + (deltaTime * depositionSpeed * (sediment - sedimentCapacity));
+		//height = sediment - sedimentCapacity; // (deltaTime * depositionSpeed * (sediment - sedimentCapacity));
+		//height = 0.f;
+	}
+
+	height = clamp(height, 0.f, 65535.f);
+
+	//height = sedimentCapacity;
+
+	//height = hardnessCoefficient;
+
+	write_imageui(outHeight, (int2)(x, y), convert_uint(height));
 }
 
 /*
