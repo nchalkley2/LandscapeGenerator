@@ -92,8 +92,20 @@ namespace LandscapeGeneration
 			float amplitude);
 
 		void Constant(boost::compute::image2d& Heightmap,
-			int32 height);
+			float height);
 
-		void Erosion(boost::compute::image2d& Heightmap);
+		struct ErosionParams
+		{
+			std::shared_ptr<Heightmap> height, water, hardness, sediment, sedimentCapacity, flux, velocity;
+		};
+
+
+		ErosionParams Erosion(ErosionParams inputMaps,
+			int32 iterations,
+			float DeltaTime,
+			float waterMul,
+			float softeningCoefficient,
+			float maxErosionDepth,
+			float sedimentCapacity);
 	}
 }

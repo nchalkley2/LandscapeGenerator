@@ -20,47 +20,33 @@ __kernel void mix_kernel(__write_only image2d_t output,
 	int w = get_image_width(output);
 	
 	const sampler_t sampler = CLK_ADDRESS_NONE | CLK_FILTER_NEAREST;
-	uint4 valueL = read_imageui(input_l, sampler, (int2)(x, y));
-	uint4 valueR = read_imageui(input_r, sampler, (int2)(x, y));
+	float4 valueL = read_imagef(input_l, sampler, (int2)(x, y));
+	float4 valueR = read_imagef(input_r, sampler, (int2)(x, y));
 	
 	switch (MixType)
 	{
 		case E_Add:
-			if (valueL.x + valueR.x < USHRT_MAX)
-			{
-				write_imageui(output, (int2)(x, y), valueL + valueR);
-			}
-			else
-			{
-				write_imageui(output, (int2)(x, y), USHRT_MAX);
-			}
+			write_imagef(output, (int2)(x, y), valueL + valueR);
 			break;
 
 		case E_Subtract:
-			if ((int)valueL.x - (int)valueR.x > 0)
-			{
-				write_imageui(output, (int2)(x, y), valueL - valueR);
-			}
-			else
-			{
-				write_imageui(output, (int2)(x, y), 0);
-			}
+			write_imagef(output, (int2)(x, y), valueL - valueR);
 			break;
 
 		case E_Multiply:
-			write_imageui(output, (int2)(x, y), valueL * valueR);
+			write_imagef(output, (int2)(x, y), valueL * valueR);
 			break;
 
 		case E_Min:
-			write_imageui(output, (int2)(x, y), min(valueL, valueR));
+			write_imagef(output, (int2)(x, y), min(valueL, valueR));
 			break;
 
 		case E_Max:
-			write_imageui(output, (int2)(x, y), max(valueL, valueR));
+			write_imagef(output, (int2)(x, y), max(valueL, valueR));
 			break;
 
 		default:
-			write_imageui(output, (int2)(x, y), valueL);
+			write_imagef(output, (int2)(x, y), valueL);
 			break;
 	}
 }

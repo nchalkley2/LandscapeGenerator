@@ -79,7 +79,7 @@ __kernel void voronoi(__read_only image2d_t heightIn,
 		getDist(x, y, x - size, y - size, w, h, size, seed)
 	};
 
-	uint out = (uint) (multi_min(
+	float out = multi_min(
 		randPoint,
 		adjRandPoints.s0,
 		adjRandPoints.s1,
@@ -88,9 +88,9 @@ __kernel void voronoi(__read_only image2d_t heightIn,
 		adjRandPoints.s4,
 		adjRandPoints.s5,
 		adjRandPoints.s6,
-		adjRandPoints.s7) * (amplitude / size));
+		adjRandPoints.s7) * (amplitude / size);
 
 	//out = (uint) amplitude;
 
-	write_imageui(heightOut, (int2)(x, y), out);
+	write_imagef(heightOut, (int2)(x, y), out);
 }

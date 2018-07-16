@@ -24,6 +24,33 @@ struct FHeightmapWrapper
 
 	std::shared_ptr<LandscapeGeneration::Heightmap> Heightmap;
 };
+	
+USTRUCT(BlueprintType, meta = (DisplayName = "Erosion Output"))
+struct FErosionOutput
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Heightmaps")
+	FHeightmapWrapper height;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Heightmaps")
+	FHeightmapWrapper water;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Heightmaps")
+	FHeightmapWrapper hardness;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Heightmaps")
+	FHeightmapWrapper sediment;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Heightmaps")
+	FHeightmapWrapper sedimentCapacity;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Heightmaps")
+	FHeightmapWrapper flux;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Heightmaps")
+	FHeightmapWrapper velocity;
+};
 
 namespace LandscapeEditorUtils
 {
@@ -60,10 +87,11 @@ public:
 		FHeightmapWrapper Voronoi_Noise(int32 Size, int32 Seed, float Amplitude);
 
 	UFUNCTION(BlueprintPure, Category = "Functions")
-		FHeightmapWrapper Erode_Landscape(FHeightmapWrapper HeightmapInput);
+		FErosionOutput Erode_Landscape(FHeightmapWrapper HeightmapInput, int32 iterations,
+			float DeltaTime = 0.016f, float waterMul = 0.012f, float softeningCoefficient = 5.0f, float maxErosionDepth = 10.f, float sedimentCapacity = 1.f);
 
 	UFUNCTION(BlueprintPure, Category = "Functions")
-		FHeightmapWrapper Constant(int32 Height);
+		FHeightmapWrapper Constant(float Height);
 
 	UFUNCTION(BlueprintPure, Category = "Functions")
 		FHeightmapWrapper Mix(FHeightmapWrapper LHeightMap, FHeightmapWrapper RHeightMap, EMixType MixType);

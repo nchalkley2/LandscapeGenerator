@@ -277,7 +277,7 @@ std::future<TSharedPtr<SNotificationItem>> ALandscapeGen::CreateNotification(con
 }*/
 
 
-FHeightmapWrapper ALandscapeGen::Constant(int32 Height)
+FHeightmapWrapper ALandscapeGen::Constant(float Height)
 {
 	UE_LOG(LogTemp, Warning, TEXT("Constant"));
 	FHeightmapWrapper NewHeightmap;
@@ -392,9 +392,37 @@ FHeightmapWrapper ALandscapeGen::Voronoi_Noise(int32 Size, int32 Seed, float Amp
 	return NewHeightmap;
 }
 
-FHeightmapWrapper ALandscapeGen::Erode_Landscape(FHeightmapWrapper HeightmapInput)
+static FErosionOutput fromErosionParams(const LandscapeGeneration::Kernels::ErosionParams& ErosionParams)
+{
+	FErosionOutput retVal;
+	retVal.height			= FHeightmapWrapper{ ErosionParams.height };
+	retVal.water			= FHeightmapWrapper{ ErosionParams.water };
+	retVal.hardness			= FHeightmapWrapper{ ErosionParams.hardness };
+	retVal.sediment			= FHeightmapWrapper{ ErosionParams.sediment };
+	retVal.sedimentCapacity = FHeightmapWrapper{ ErosionParams.sedimentCapacity };
+	retVal.flux				= FHeightmapWrapper{ ErosionParams.flux };
+	retVal.velocity			= FHeightmapWrapper{ ErosionParams.velocity };
+
+	return retVal;
+}
+
+FErosionOutput ALandscapeGen::Erode_Landscape(FHeightmapWrapper HeightmapInput, int32 iterations,
+	float DeltaTime, float waterMul, float softeningCoefficient, float maxErosionDepth, float sedimentCapacity)
 {
 	UE_LOG(LogTemp, Warning, TEXT("Erosion"));
+
+	LandscapeGeneration::Kernels::ErosionParams Input;
+
+	const auto FluxImageFormat = compute::image_format(CL_RGBA, CL_FLOAT);
+	const auto WaterImageFormat = compute::image_format(CL_R, CL_FLOAT);
+
+	Input.height = HeightmapInput.Heightmap;
+	Input.water = LandscapeGeneration::CreateHeightmap(HeightmapInput.Heightmap->Image.width(), HeightmapInput.Heightmap->Image.width(), WaterImageFormat);
+	Input.hardness = LandscapeGeneration::CreateHeightmap(HeightmapInput.Heightmap->Image.width(), HeightmapInput.Heightmap->Image.width(), WaterImageFormat);
+	Input.sediment = LandscapeGeneration::CreateHeightmap(HeightmapInput.Heightmap->Image.width(), HeightmapInput.Heightmap->Image.width(), WaterImageFormat);
+	Input.sedimentCapacity = LandscapeGeneration::CreateHeightmap(HeightmapInput.Heightmap->Image.width(), HeightmapInput.Heightmap->Image.width(), WaterImageFormat);
+	Input.flux = LandscapeGeneration::CreateHeightmap(HeightmapInput.Heightmap->Image.width(), HeightmapInput.Heightmap->Image.width(), FluxImageFormat);
+	Input.velocity = LandscapeGeneration::CreateHeightmap(HeightmapInput.Heightmap->Image.width(), HeightmapInput.Heightmap->Image.width(), FluxImageFormat);
 
 	LandscapeGeneration::PushKernel([=]() -> void
 	{
@@ -403,7 +431,8 @@ FHeightmapWrapper ALandscapeGen::Erode_Landscape(FHeightmapWrapper HeightmapInpu
 
 		catch_error([=]() -> void
 		{
-			LandscapeGeneration::Kernels::Erosion(HeightmapInput.Heightmap->Image);
+			auto ErosionRet = LandscapeGeneration::Kernels::Erosion(Input,
+				iterations, DeltaTime, waterMul, softeningCoefficient, maxErosionDepth, sedimentCapacity);
 		}); 
 		
 		NotificationFuture.wait();
@@ -416,7 +445,7 @@ FHeightmapWrapper ALandscapeGen::Erode_Landscape(FHeightmapWrapper HeightmapInpu
 		});
 	});
 
-	return HeightmapInput;
+	return fromErosionParams(Input);
 }
 
 FHeightmapWrapper ALandscapeGen::Mix(FHeightmapWrapper LHeightMap, FHeightmapWrapper RHeightMap, EMixType MixType)
@@ -455,7 +484,8 @@ void ALandscapeGen::SetHeightmap(FHeightmapWrapper HeightMap)
 	// Check that the heightmap exists
 	if (HeightMap.Heightmap != nullptr)
 	{
-		if (HeightMap.Heightmap->Image.format() != boost::compute::image_format(CL_R, CL_UNSIGNED_INT16))
+		if (HeightMap.Heightmap->Image.format() != boost::compute::image_format(CL_R, CL_UNSIGNED_INT16)
+			&& HeightMap.Heightmap->Image.format() != boost::compute::image_format(CL_R, CL_FLOAT))
 		{
 			UE_LOG(LogTemp, Warning, TEXT("Set Heightmap failed"));
 			return;

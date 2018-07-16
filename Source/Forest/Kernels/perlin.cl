@@ -170,7 +170,7 @@ __kernel void perlin(__read_only image2d_t heightIn,
 	int x = get_global_id(0);
 	int y = get_global_id(1);
 
-	uint out = (uint) (perlin2d((float)x, (float)y, 1.f / size, depth, seed) * amplitude);
+	float out = perlin2d((float)x, (float)y, 1.f / size, depth, seed) * amplitude;
 
-	write_imageui(heightOut, (int2)(x, y), out);
+	write_imagef(heightOut, (int2)(x, y), out);
 }

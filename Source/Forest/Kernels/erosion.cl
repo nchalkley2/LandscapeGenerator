@@ -4,7 +4,7 @@
 	return fract(sin(dot((float2)(co.x + seed, co.y + seed), (float2)(12.9898, 78.233))) * 43758.5453, &garbage);
 }
 
-const sampler_t sampler = CLK_ADDRESS_NONE | CLK_FILTER_NEAREST | CLK_ADDRESS_CLAMP_TO_EDGE;
+const sampler_t sampler = CLK_NORMALIZED_COORDS_FALSE | CLK_FILTER_NEAREST | CLK_ADDRESS_CLAMP_TO_EDGE;
 
 // Take an input Water Height map and add a random amount of rain to it
 __kernel void rainfall(
@@ -19,15 +19,14 @@ __kernel void rainfall(
 	int y = get_global_id(1);
 
 	// Calculate a random value
-	float rainAmt 	= perlin2d((float)x, (float)y, 1.f / 1.f, 2, 4);
+	float rainAmt	= read_imagef(inWaterHeight, sampler, (int2)(x, y)).x;//perlin2d((float)x, (float)y, 1.f / 1.f, 2, 4);
 	// Multiply the value times the global mul and deltaTime
-	rainAmt 		= rainAmt * waterMul * deltaTime;
+	rainAmt 		+= waterMul * deltaTime;
 
 	// Read the last frames value
 	//float4 value = read_imagef(inWaterHeight, sampler, (int2)(x, y));
 	//write_imagef(outWaterHeight, (int2)(x, y), rainAmt + value.x);
-
-	write_imagef(outWaterHeight, (int2)(x, y), 100.f);
+	write_imagef(outWaterHeight, (int2)(x, y), rainAmt);
 }
 
 
@@ -40,42 +39,41 @@ __kernel void flux(
 {
 	// fluxImg.x = fL
 	// fluxImg.y = fR
-	// fluxImg.z = fT
-	// fluxImg.w = fB
+	// fluxImg.z = fB
+	// fluxImg.w = fT
 
 	int x = get_global_id(0);
 	int y = get_global_id(1);
 
-	const float grav = 0.980665f;
-	const float area = 1.f;
-	const float len = 1.f;
+	const float grav = 9.80665f;
+	const float area = 20.f;
+	const float len = 5.f;
 
 	float4 lastflux = read_imagef(inFluxHeight, sampler, (int2)(x, y));
 
-	uint4 height = convert_uint4(read_imageui(inHeight, sampler, (int2)(x,y)).xxxx);
-	float4 waterHeight = convert_float4(read_imagef(inWaterHeight, sampler, (int2)(x,y)).xxxx);
+	float4 height = read_imagef(inHeight, sampler, (int2)(x,y)).xxxx;
+	float4 waterHeight = read_imagef(inWaterHeight, sampler, (int2)(x,y)).xxxx;
 
-	uint4 heightAdj =
+	float4 heightAdj =
 	{
-		read_imageui(inHeight, sampler, (int2)(x - 1,y)).x,
-		read_imageui(inHeight, sampler, (int2)(x + 1,y)).x,
-		read_imageui(inHeight, sampler, (int2)(x,y + 1)).x,
-		read_imageui(inHeight, sampler, (int2)(x,y - 1)).x
+		read_imagef(inHeight, sampler, (int2)(x - 1,y)).x,
+		read_imagef(inHeight, sampler, (int2)(x + 1,y)).x,
+		read_imagef(inHeight, sampler, (int2)(x,y - 1)).x,
+		read_imagef(inHeight, sampler, (int2)(x,y + 1)).x
 	};
 
 	float4 waterHeightAdj =
 	{
 		read_imagef(inWaterHeight, sampler, (int2)(x - 1,y)).x,
 		read_imagef(inWaterHeight, sampler, (int2)(x + 1,y)).x,
-		read_imagef(inWaterHeight, sampler, (int2)(x,y + 1)).x,
-		read_imagef(inWaterHeight, sampler, (int2)(x,y - 1)).x
+		read_imagef(inWaterHeight, sampler, (int2)(x,y - 1)).x,
+		read_imagef(inWaterHeight, sampler, (int2)(x,y + 1)).x
 	};
 
-	float4 heightDif = (waterHeight + convert_float4(height)) - (waterHeightAdj + convert_float4(heightAdj));
+	float4 heightDif = (waterHeight + height) - (waterHeightAdj + heightAdj);
 
 	float4 fluxHeight = max((float4)(0.f, 0.f, 0.f, 0.f),
-		lastflux + (deltaTime * area * ((grav * convert_float4(heightDif) / len))));
-		//(deltaTime * area * ((grav * convert_float4(heightDif) / len))));
+		lastflux + (deltaTime * area * ((grav * heightDif) / len)));
 
 	write_imagef(outFluxHeight, (int2)(x, y), fluxHeight);
 }
@@ -89,18 +87,21 @@ __kernel void calculate_k_factor(
 	int x = get_global_id(0);
 	int y = get_global_id(1);
 
-	const float len = 1.f;
+	const float len = 5.f;
 
-	uint waterHeight = read_imageui(inWaterHeight, sampler, (int2)(x, y)).x;
+	float waterHeight = read_imagef(inWaterHeight, sampler, (int2)(x, y)).x;
 	float4 flux = read_imagef(inFluxHeight, sampler, (int2)(x, y));
 
 	// This is the scaling factor for the flux. If the flux's magnitude is too large it will scale it down
-	float K = min(1.f, (convert_float(waterHeight) * len) / ((flux.x + flux.y + flux.z + flux.w) * deltaTime));
+	// This is SUPPOSED to be min. The paper cited in this source code is wrong
+	float fluxAdd = flux.x + flux.y + flux.z + flux.w;
+	fluxAdd = max(fluxAdd, 0.001f);
+
+	float K = min(1.f, (waterHeight * len) / ((fluxAdd) * deltaTime));
 
 	flux *= K;
 
 	write_imagef(outFluxHeight, (int2)(x, y), flux);
-	//write_imagef(outFluxHeight, (int2)(x, y), (float4)(1.0f, 1.0f, 0.0f, 1.0f));
 }
 
 __kernel void calculate_water_height_change(
@@ -112,19 +113,19 @@ __kernel void calculate_water_height_change(
 	int x = get_global_id(0);
 	int y = get_global_id(1);
 
-	const float len = 1.f;
+	const float len = 5.f;
 
 	// fluxImg.x = fL
 	// fluxImg.y = fR
-	// fluxImg.z = fT
-	// fluxImg.w = fB
+	// fluxImg.z = fB
+	// fluxImg.w = fT
 
 	// Read the adjacent flux cells and add them
 	float fluxIn =
-		  read_imagef(inFluxHeight, sampler, (int2)(x - 1, y)).y	// Right
-		+ read_imagef(inFluxHeight, sampler, (int2)(x + 1, y)).x	// Left
-		+ read_imagef(inFluxHeight, sampler, (int2)(x, y + 1)).w	// Top
-		+ read_imagef(inFluxHeight, sampler, (int2)(x, y - 1)).z;	// Bottom
+		  read_imagef(inFluxHeight, sampler, (int2)(x - 1, y)).y	// Left
+		+ read_imagef(inFluxHeight, sampler, (int2)(x + 1, y)).x	// Right
+		+ read_imagef(inFluxHeight, sampler, (int2)(x, y - 1)).w	// Bottom
+		+ read_imagef(inFluxHeight, sampler, (int2)(x, y + 1)).z;	// Top
 
 	// Add all the values in the current flux cell
 	float4 flux = read_imagef(inFluxHeight, sampler, (int2)(x, y));
@@ -133,8 +134,8 @@ __kernel void calculate_water_height_change(
 	float waterDif = (fluxIn - fluxOut) * deltaTime;
 	
 	// Read the water input, add the water difference, and write out
-	int waterHeight = read_imageui(inWaterHeight, sampler, (int2)(x, y)).x;
-	write_imageui(outWaterHeight, (int2)(x, y), (uint)(waterHeight + convert_int(waterDif / len)));
+	float waterHeight = read_imagef(inWaterHeight, sampler, (int2)(x, y)).x;
+	write_imagef(outWaterHeight, (int2)(x, y), waterHeight + (waterDif / (len * len)));
 }
 
 __kernel void calculate_velocity(
@@ -149,13 +150,13 @@ __kernel void calculate_velocity(
 
 	// fluxImg.x = fL
 	// fluxImg.y = fR
-	// fluxImg.z = fT
-	// fluxImg.w = fB
+	// fluxImg.z = fB
+	// fluxImg.w = fT
 
 	// velocityImg.x = fL
 	// velocityImg.y = fR
-	// velocityImg.z = fT
-	// velocityImg.w = fB
+	// velocityImg.z = fB
+	// velocityImg.w = fT
 
 	float4 flux = read_imagef(inFluxHeight, sampler, (int2)(x, y));
 
@@ -163,8 +164,8 @@ __kernel void calculate_velocity(
 	{
 		read_imagef(inFluxHeight, sampler, (int2)(x - 1,y)).y,
 		read_imagef(inFluxHeight, sampler, (int2)(x + 1,y)).x,
-		read_imagef(inFluxHeight, sampler, (int2)(x,y + 1)).w,
-		read_imagef(inFluxHeight, sampler, (int2)(x,y - 1)).z
+		read_imagef(inFluxHeight, sampler, (int2)(x,y - 1)).w,
+		read_imagef(inFluxHeight, sampler, (int2)(x,y + 1)).z
 	};
 
 	float4 velocity =
@@ -187,13 +188,13 @@ inline float2 calculateNrm(
 
 	float4 heightAdj =
 	{
-		(float)read_imageui(inHeight, sampler, (int2)(x - 1,y)).x,
-		(float)read_imageui(inHeight, sampler, (int2)(x + 1,y)).x,
-		(float)read_imageui(inHeight, sampler, (int2)(x,y + 1)).x,
-		(float)read_imageui(inHeight, sampler, (int2)(x,y - 1)).x
+		read_imagef(inHeight, sampler, (int2)(x - 1,y)).x,
+		read_imagef(inHeight, sampler, (int2)(x + 1,y)).x,
+		read_imagef(inHeight, sampler, (int2)(x,y - 1)).x,
+		read_imagef(inHeight, sampler, (int2)(x,y + 1)).x
 	};
 
-	float height = (float)read_imageui(inHeight, sampler, (int2)(x, y)).x;
+	float height = read_imagef(inHeight, sampler, (int2)(x, y)).x;
 
 	// X+ Y+
 	float2 nrm =
@@ -208,7 +209,7 @@ inline float2 calculateNrm(
 	return bNormalize ? normalize(nrm) : nrm;
 }
 
-inline float calculateSinTiltAngle(
+/*inline float calculateSinTiltAngle(
 	__read_only image2d_t inHeight)
 {
 	float2 nrmVec = calculateNrm(inHeight, true);
@@ -220,7 +221,7 @@ inline float calculateSinTiltAngle(
 	// sin = sqrt(1 - cos^2)
 	//return vecCos;
 	return sin;
-}
+}*/
 
 inline float lmax(const float waterHeight, const float maxErosionDepth)
 {
@@ -244,17 +245,16 @@ __kernel void calculate_sediment_capacity(
 	int y = get_global_id(1);
 
 	float2 velocity = read_imagef(inVelocity, sampler, (int2)(x, y)).xy;
-	uint waterHeight = read_imageui(inWaterHeight, sampler, (int2)(x, y)).x;
+	float waterHeight = read_imagef(inWaterHeight, sampler, (int2)(x, y)).x;
 
 	float2 nrm = calculateNrm(inHeight, true);
 
 	write_imagef(outSedimentCapacity, (int2)(x, y),
-		//sedimentCapacity * calculateSinTiltAngle(inHeight) * velocityMagnitude * lmax((float)waterHeight, maxErosionDepth));
-		sedimentCapacity * dot(-nrm, normalize(velocity)) * length(velocity) * lmax((float)waterHeight, maxErosionDepth));
-		//length(velocity));
-		//100.f);
-		//(float4)(read_imagef(inVelocity, sampler, (int2)(x, y)).x, read_imagef(inVelocity, sampler, (int2)(x, y)).y, 0.f, 0.f));
-		//(float4)(velocity.x, velocity.y, 0.f, 0.f));
+		//C(x, y) = Kc ·(-N(x, y)·V)· |v(x, y)| · lmax(d1(x, y))
+		//sedimentCapacity * dot(-nrm, normalize(velocity)) * length(velocity) * lmax(waterHeight, maxErosionDepth));
+		sedimentCapacity * length(velocity) * lmax(waterHeight, maxErosionDepth));
+		//lmax(waterHeight, maxErosionDepth) * length(velocity) * 1.f);
+
 }
 
 float calculate_hardness_coefficient(
@@ -273,8 +273,8 @@ float calculate_hardness_coefficient(
 	float hardness = read_imagef(inHardness, sampler, (int2)(x, y)).x;
 	float sediment = read_imagef(inSediment, sampler, (int2)(x, y)).x;
 	float sedimentCapacity = read_imagef(inSedimentCapacity, sampler, (int2)(x, y)).x;
-	sedimentCapacity = 512.f;
 
+	// Rt+∆t(x, y) = max(Rmin,Rt(x, y) − (∆t ·Kh * Ks(st −C)))
 	return max(hardnessMin, hardness - (deltaTime * softeningCoefficient * sedimentCoefficient * (sediment - sedimentCapacity)));
 }
 
@@ -283,7 +283,11 @@ __kernel void calculate_erosion_deposition(
 	__write_only image2d_t	outHeight,
 	__read_only image2d_t	inHardness,
 	__read_only image2d_t	inSediment,
+	__write_only image2d_t	outSediment,
 	__read_only image2d_t	inSedimentCapacity,
+	__read_only image2d_t	inWaterHeight,
+	__write_only image2d_t	outWaterHeight,
+
 	float depositionSpeed,
 	float sedimentCoefficient,
 	float softeningCoefficient,
@@ -294,62 +298,63 @@ __kernel void calculate_erosion_deposition(
 	int x = get_global_id(0);
 	int y = get_global_id(1);
 
-	float height = (float)read_imageui(inHeight, sampler, (int2)(x, y)).x;
-	float hardness = read_imagef(inHardness, sampler, (int2)(x, y)).x;
-	float sediment = read_imagef(inSediment, sampler, (int2)(x, y)).x;
-	float sedimentCapacity = read_imagef(inSedimentCapacity, sampler, (int2)(x, y)).x;
-	float hardnessCoefficient = calculate_hardness_coefficient(inHardness, inSediment, inSedimentCapacity, 
+	float height =				read_imagef(inHeight, sampler, (int2)(x, y)).x;
+	float waterHeight =			read_imagef(inWaterHeight, sampler, (int2)(x, y)).x;
+	float hardness =			read_imagef(inHardness, sampler, (int2)(x, y)).x;
+	float sediment =			read_imagef(inSediment, sampler, (int2)(x, y)).x;
+	float sedimentCapacity =	read_imagef(inSedimentCapacity, sampler, (int2)(x, y)).x;
+	float hardnessCoefficient =	calculate_hardness_coefficient(inHardness, inSediment, inSedimentCapacity, 
 		sedimentCoefficient, softeningCoefficient, hardnessMin, deltaTime);
 
+	float diff = 0.f;
+
 	if (sediment < sedimentCapacity)
-	{	// bt+∆t = bt −∆t · Rt(x, y) · Ks(C − st)
-		height = height - (deltaTime * hardnessCoefficient * sedimentCoefficient * (sedimentCapacity - sediment));
-		//height = hardnessCoefficient;//(deltaTime * hardnessCoefficient * sedimentCoefficient * (sedimentCapacity - sediment));
-		//height = 0.f;
+	{
+		// ∆t · Rt(x, y) · Ks(C − st)
+		diff = (deltaTime * hardnessCoefficient * sedimentCoefficient * (sedimentCapacity - sediment));
+
+		// bt+∆t = bt − ∆t · Rt(x, y) · Ks(C − st)
+		height -= diff;
+		// s1 = st + ∆t · Rt(x, y) · Ks(C − st)
+		sediment += diff;
+		// d3 = d2 + ∆t · Rt(x, y) · Ks(C − st)
+		waterHeight += diff;
 	}
 	else
-	{	// bt+∆t = bt + ∆t · Kd(st −C)
-		height = height + (deltaTime * depositionSpeed * (sediment - sedimentCapacity));
-		//height = sediment - sedimentCapacity; // (deltaTime * depositionSpeed * (sediment - sedimentCapacity));
-		//height = 0.f;
+	{	
+		// ∆t · Kd(st −C)
+		diff = (deltaTime * depositionSpeed * (sediment - sedimentCapacity));
+
+		// bt+∆t = bt + ∆t · Kd(st − C)
+		height += diff;
+		// s1 = st − ∆t · Kd(st − C)
+		sediment -= diff;
+		// d3 = d2 − ∆t · Kd(st − C)
+		waterHeight -= diff;
 	}
 
-	height = clamp(height, 0.f, 65535.f);
-
-	//height = sedimentCapacity;
-
-	//height = hardnessCoefficient;
-
-	write_imageui(outHeight, (int2)(x, y), convert_uint(height));
+	write_imagef(outWaterHeight, (int2)(x, y), waterHeight);
+	write_imagef(outSediment, (int2)(x, y), sediment);
+	write_imagef(outHeight, (int2)(x, y), height);
 }
 
-/*
-__kernel void erosion(
-	__read_only image2d_t 	heightIn,		// 0
-	__write_only image2d_t 	heightOut,		// 1
-	__read_only image2d_t 	inWaterHeight,	// 2
-	__write_only image2d_t 	outWaterHeight,	// 3
-	//__read_only image2d_t 	inSediment,		// 4
-	//__write_only image2d_t 	outSediment,	// 5
-	__read_only image2d_t 	inFlux,			// 6
-	__write_only image2d_t 	outFlux,		// 7
-	//__read_only image2d_t 	inVelocity,		// 8
-	//__write_only image2d_t 	outVelocity,	// 9
-	uint					seed,			// 10
-	uint 					iterations,		// 11
-	float 					deltaTime,		// 12
-	float					waterMul		// 13
+__kernel void move_sediment(
+	__read_only image2d_t inSediment,
+	__write_only image2d_t outSediment,
+	__read_only image2d_t inVelocity,
+
+	float deltaTime
 )
 {
 	int x = get_global_id(0);
 	int y = get_global_id(1);
-	int h = get_image_height(heightIn);
-	int w = get_image_width(heightIn);
 
-	const sampler_t sampler = CLK_ADDRESS_NONE | CLK_FILTER_NEAREST;
+	float2 uv = read_imagef(inVelocity, sampler, (int2)(x, y)).xy * deltaTime;
 
-	const float period = 32.f;
+	float2 coord = (float2)(x, y) - uv;
 
-	uint4 value = read_imageui(heightIn, sampler, (int2)(x, y));
+	// linearly interpolate between samples since uv can sample inbetween pixels
+	const sampler_t sedimentSampler = CLK_NORMALIZED_COORDS_FALSE | CLK_FILTER_LINEAR | CLK_ADDRESS_CLAMP_TO_EDGE;
+	float sediment = read_imagef(inSediment, sedimentSampler, coord).x;
+	write_imagef(outSediment, (int2)(x,y), sediment);
 }
-*/

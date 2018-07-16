@@ -14,7 +14,7 @@ __kernel void warpedperlin(__read_only image2d_t heightIn,
 								 perlin2d((float)x + 5.2f, (float)y + 1.3f, 1.f / size, depth, seed));
 	warpedcoords *= 256.f;
 
-	uint out = (uint) (perlin2d((float)x + warpedcoords.x, (float)y + warpedcoords.y, 1.f / (size + warpedcoords.x), depth, seed) * amplitude);
+	float out = perlin2d((float)x + warpedcoords.x, (float)y + warpedcoords.y, 1.f / (size + warpedcoords.x), depth, seed) * amplitude;
 
-	write_imageui(heightOut, (int2)(x, y), out);
+	write_imagef(heightOut, (int2)(x, y), out);
 }

@@ -40,7 +40,7 @@ namespace LandscapeGeneration
 	// The image format for all heightmaps
 	// This has external linkage to some default params for functions in this 
 	// namespace
-	compute::image_format						ImageFormat = compute::image_format(CL_R, CL_UNSIGNED_INT16);
+	compute::image_format						ImageFormat = compute::image_format(CL_R, CL_FLOAT);
 
 	static std::queue<std::function<void()>>	KernelQueue;
 	static std::thread							KernelThread;
@@ -49,6 +49,16 @@ namespace LandscapeGeneration
 	// Ensures that the device, context, queue are set up
 	static void EnsureStateIsSetup()
 	{
+		boost::compute::device NVIDIADevice;
+		for (auto& Device : boost::compute::system::devices())
+		{
+			if (Device.vendor() == "NVIDIA Corporation")
+			{
+				NVIDIADevice = Device;
+				break;
+			}
+		}
+
 		if (Devices.size() == 0)
 		{
 			Devices.push_back(compute::system::default_device());
@@ -56,13 +66,13 @@ namespace LandscapeGeneration
 
 		if (Context.get() == nullptr)
 		{
-			Context = unique_ptr<compute::context>(new compute::context(Devices));
+			Context = unique_ptr<compute::context>(new compute::context(NVIDIADevice));
 		}
 
 		if (CommandQueue.get() == nullptr)
 		{
 			CommandQueue = unique_ptr<compute::command_queue>(
-				new compute::command_queue(*Context.get(), Devices[0]));
+				new compute::command_queue(*Context.get(), NVIDIADevice));
 		}
 	}
 
@@ -80,16 +90,44 @@ namespace LandscapeGeneration
 
 	Heightmap::operator TArray<uint16>() const
 	{
-		if (this->Image.format() != boost::compute::image_format(CL_R, CL_UNSIGNED_INT16))
+		// Can't use a switch here because boost::compute::image_format is non const
+		if (this->Image.format() != boost::compute::image_format(CL_R, CL_UNSIGNED_INT16)
+		 && this->Image.format() != boost::compute::image_format(CL_R, CL_FLOAT))
 			throw std::runtime_error("Wrong heightmap type conversion");
 
-		TArray<uint16> OutArray;
-		OutArray.SetNumUninitialized(Image.width() * Image.height());
+		if (this->Image.format() == boost::compute::image_format(CL_R, CL_UNSIGNED_INT16))
+		{
+			TArray<uint16> OutArray;
+			OutArray.SetNumUninitialized(Image.width() * Image.height());
 
-		// Copy from the device to the host
-		CommandQueue->enqueue_read_image(Image, Image.origin(), Image.size(), OutArray.GetData());
+			// Copy from the device to the host
+			CommandQueue->enqueue_read_image(Image, Image.origin(), Image.size(), OutArray.GetData());
 
-		return OutArray;
+			return OutArray;
+		}
+
+		if (this->Image.format() == boost::compute::image_format(CL_R, CL_FLOAT))
+		{
+			TArray<uint16> OutArray;
+			OutArray.SetNumUninitialized(Image.width() * Image.height());
+
+			float* RawCopy = (float*)this->CreateRawCopy();
+			const auto PxNum = Image.width() * Image.height();
+
+			for (int32 i = 0; i < PxNum; i++)
+			{
+				RawCopy[i] = FMath::Clamp(RawCopy[i], 0.f, (float)UINT16_MAX);
+
+				OutArray[i] = (uint16)roundf(RawCopy[i]);
+			}
+
+			delete[] RawCopy;
+
+			return OutArray;
+		}
+
+		throw std::runtime_error("Undefined control path. An exception should have been thrown at \"Wrong heightmap type conversion\".");
+		return TArray<uint16>();
 	}
 
 	void* Heightmap::CreateRawCopy() const
@@ -276,39 +314,47 @@ namespace LandscapeGeneration
 		}
 
 		void Constant(compute::image2d& Heightmap,
-			int32 height)
+			float height)
 		{
 			using compute::dim;
 
 			auto size = Heightmap.width() * Heightmap.height();
 
 			// Create an array to fill up the device memory with
-			const std::unique_ptr<uint16[]> ConstantHeightArray(new uint16[size]);
+			const std::unique_ptr<float[]> ConstantHeightArray(new float[size]);
 			
 			for (int i = 0; i < size; i++)
 			{
-				ConstantHeightArray[i] = (uint16)height;
+				ConstantHeightArray[i] = height;
 			}
 
 			CommandQueue->enqueue_write_image(Heightmap, Heightmap.origin(), Heightmap.size(), ConstantHeightArray.get());
 		}
 
-		void Erosion(boost::compute::image2d& Heightmap)
+		ErosionParams Erosion(ErosionParams inputMaps,
+			int32 iterations,
+			float DeltaTime,
+			float waterMul,
+			float softeningCoefficient,
+			float maxErosionDepth,
+			float sedimentCapacity
+			)
 		{
 			using compute::dim;
 
-			const float DeltaTime = 0.1f;
 			const auto FluxImageFormat = compute::image_format(CL_RGBA, CL_FLOAT);
 			const auto WaterImageFormat = compute::image_format(CL_R, CL_FLOAT);
 
-			auto waterHeight	= CreateHeightmap(Heightmap.width(), Heightmap.height(), WaterImageFormat);
-			auto hardness		= CreateHeightmap(Heightmap.width(), Heightmap.height(), WaterImageFormat);
-			auto sediment		= CreateHeightmap(Heightmap.width(), Heightmap.height(), WaterImageFormat);
-			auto sedimentCap	= CreateHeightmap(Heightmap.width(), Heightmap.height(), WaterImageFormat);
+			auto& Heightmap		= inputMaps.height->Image;
+			auto waterHeight	= inputMaps.water;//CreateHeightmap(Heightmap.width(), Heightmap.height(), WaterImageFormat);
+			auto hardness		= inputMaps.hardness;//CreateHeightmap(Heightmap.width(), Heightmap.height(), WaterImageFormat);
+			auto sediment		= inputMaps.sediment;//CreateHeightmap(Heightmap.width(), Heightmap.height(), WaterImageFormat);
+			auto sediment2		= CreateHeightmap(Heightmap.width(), Heightmap.height(), WaterImageFormat);
+			auto sedimentCap	= inputMaps.sedimentCapacity;//CreateHeightmap(Heightmap.width(), Heightmap.height(), WaterImageFormat);
 			
-			auto inFluxImage	= CreateHeightmap(Heightmap.width(), Heightmap.height(), FluxImageFormat);
+			auto inFluxImage	= inputMaps.flux;//CreateHeightmap(Heightmap.width(), Heightmap.height(), FluxImageFormat);
 			auto outFluxImage	= CreateHeightmap(Heightmap.width(), Heightmap.height(), FluxImageFormat);
-			auto velocityImage	= CreateHeightmap(Heightmap.width(), Heightmap.height(), FluxImageFormat);
+			auto velocityImage	= inputMaps.velocity;//CreateHeightmap(Heightmap.width(), Heightmap.height(), FluxImageFormat);
 
 			{
 				const char source[] = BOOST_COMPUTE_STRINGIZE_SOURCE(
@@ -324,7 +370,7 @@ namespace LandscapeGeneration
 					int x = get_global_id(0);
 					int y = get_global_id(1);
 
-					write_imagef(outputImage, (int2)(x, y), 1.f);
+					write_imagef(outputImage, (int2)(x, y), 0.f);
 				}
 				);
 
@@ -338,6 +384,34 @@ namespace LandscapeGeneration
 				CommandQueue->finish();
 			}
 
+			/*{
+				const char source[] = BOOST_COMPUTE_STRINGIZE_SOURCE(
+					__kernel void rainfall_const(
+						__write_only image2d_t  outputImage
+					)
+				{
+					const sampler_t sampler = CLK_NORMALIZED_COORDS_FALSE |
+						CLK_ADDRESS_CLAMP_TO_EDGE |
+						CLK_FILTER_NEAREST;
+
+					// Store each work-item's unique row and column
+					int x = get_global_id(0);
+					int y = get_global_id(1);
+
+					write_imagef(outputImage, (int2)(x, y), 12.f);
+				}
+				);
+
+				compute::program rainfall_program = boost::compute::program::create_with_source(source, *Context.get());
+
+				rainfall_program.build();
+				compute::kernel rainfall_const_kernel(rainfall_program, "rainfall_const");
+
+				rainfall_const_kernel.set_arg(0, waterHeight->Image);
+				CommandQueue->enqueue_nd_range_kernel(rainfall_const_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
+				CommandQueue->finish();
+			}*/
+
 			compute::program program =
 				create_with_source_file({ GetKernelsPath() + "perlin.cl", GetKernelsPath() + "erosion.cl" }, *Context.get());
 
@@ -350,23 +424,21 @@ namespace LandscapeGeneration
 			compute::kernel calculate_velocity_kernel(program, "calculate_velocity");
 			compute::kernel calculate_sediment_capacity_kernel(program, "calculate_sediment_capacity");
 			compute::kernel calculate_erosion_deposition_kernel(program, "calculate_erosion_deposition");
+			compute::kernel move_sediment_kernel(program, "move_sediment");
 			
-			for (int i = 0; i < 100; i++)
+			for (int i = 0; i < iterations; i++)
 			{
 				rainfall_kernel.set_args(
 					waterHeight->Image,		// Water Height in
 					waterHeight->Image,		// Water Height out
 					(cl_uint)1000u + i,		// Seed
 					(cl_float)DeltaTime,	// DeltaTime
-					(cl_float)10.f			// WaterMul
+					(cl_float)waterMul		// WaterMul
 				);
 
 				CommandQueue->enqueue_nd_range_kernel(rainfall_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
 				CommandQueue->finish();
-			}
 
-			for (int i = 0; i < 50; i++)
-			{
 				// Calculate flux and ping-pong flux images
 				{
 					// Calculates the flux
@@ -402,7 +474,7 @@ namespace LandscapeGeneration
 					waterHeight->Image,		// Water Height in
 					waterHeight->Image,		// Water Height out
 					inFluxImage->Image,		// Flux in
-					(cl_float) 0.1f			// DeltaTime
+					(cl_float)DeltaTime		// DeltaTime
 				);
 
 				CommandQueue->enqueue_nd_range_kernel(calculate_water_height_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
@@ -411,15 +483,15 @@ namespace LandscapeGeneration
 				calculate_velocity_kernel.set_args(
 					inFluxImage->Image,		// Flux in
 					velocityImage->Image,	// Velocity out
-					(cl_float) 0.1f			// DeltaTime
+					(cl_float)DeltaTime		// DeltaTime
 				);
 
 				CommandQueue->enqueue_nd_range_kernel(calculate_velocity_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
 				CommandQueue->finish();
 
 				calculate_sediment_capacity_kernel.set_args(
-					(cl_float) 1.f,			// Sediment capacity
-					(cl_float) 1024.f,			// maxErosionDepth
+					(cl_float)sedimentCapacity,			// Sediment capacity
+					(cl_float)maxErosionDepth,		// maxErosionDepth
 					Heightmap,				// Terrain Height in
 					waterHeight->Image,		// Water height in
 					velocityImage->Image,	// Velocity in
@@ -434,18 +506,34 @@ namespace LandscapeGeneration
 					Heightmap,				// Terrain Height out
 					hardness->Image,		// Terrain Hardness in
 					sediment->Image,		// Sediment in
+					sediment2->Image,		// Sediment out
 					sedimentCap->Image,		// Sediment capacity in
+					waterHeight->Image,		// Water height in
+					waterHeight->Image,		// Water height out
 
-					(cl_float) 0.1f,		// deposition speed
-					(cl_float) 1.f,			// sedimentCoefficient
-					(cl_float) 0.01f,		// softeningCoefficient
+					(cl_float) 1.f,			// deposition speed
+					(cl_float) 1.0f,		// sedimentCoefficient
+					(cl_float)softeningCoefficient,		// softeningCoefficient
 					(cl_float) 0.1f,		// hardnessMin
 					(cl_float)DeltaTime
 				);
 
 				CommandQueue->enqueue_nd_range_kernel(calculate_erosion_deposition_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
 				CommandQueue->finish();
+
+				/*move_sediment_kernel.set_args(
+					sediment2->Image,		// Sediment in
+					sediment->Image,		// Sediment out
+					velocityImage->Image,	// Velocity in
+
+					(cl_float)DeltaTime
+				);
+
+				CommandQueue->enqueue_nd_range_kernel(move_sediment_kernel, dim(0, 0), Heightmap.size(), dim(1, 1));
+				CommandQueue->finish();*/
 			}
+
+			//Heightmap = inFluxImage->Image;
 
 			//Heightmap = sedimentCap->Image;
 
@@ -456,6 +544,8 @@ namespace LandscapeGeneration
 			//FString Fs = FString(ANSI_TO_TCHAR(hostBuffer.data()));
 			//UE_LOG(LogTemp, Warning, TEXT("%s"), *Fs);
 			//UE_LOG(LogTemp, Warning, TEXT("asfkahfkld"));
+
+			return ErosionParams{waterHeight, hardness, sediment, sedimentCap, outFluxImage, velocityImage};
 		}
 	}
 }
